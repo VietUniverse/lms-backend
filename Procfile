@@ -1,0 +1,1 @@
+web: gunicorn --chdir core.wsgi --log-file -
