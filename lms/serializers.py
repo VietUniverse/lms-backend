@@ -1,5 +1,24 @@
 from rest_framework import serializers
 from .models import Classroom, Deck, Assignment, Progress
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
+
+class StudentSerializer(serializers.ModelSerializer):
+    """Serializer cho học sinh trong lớp."""
+    class Meta:
+        model = User
+        fields = ["id", "email", "full_name"]
+
+
+class AssignmentBriefSerializer(serializers.ModelSerializer):
+    """Serializer ngắn gọn cho bài tập."""
+    deck_title = serializers.CharField(source="deck.title", read_only=True, default=None)
+
+    class Meta:
+        model = Assignment
+        fields = ["id", "title", "deck_title", "status", "created_at"]
 
 
 class ClassroomSerializer(serializers.ModelSerializer):
@@ -7,8 +26,23 @@ class ClassroomSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Classroom
-        fields = ["id", "name", "description", "status", "student_count", "created_at"]
-        read_only_fields = ["id", "created_at"]
+        fields = ["id", "name", "description", "join_code", "status", "student_count", "created_at"]
+        read_only_fields = ["id", "join_code", "created_at"]
+
+    def get_student_count(self, obj):
+        return obj.students.count()
+
+
+class ClassroomDetailSerializer(serializers.ModelSerializer):
+    """Serializer chi tiết cho trang quản lý lớp."""
+    student_count = serializers.SerializerMethodField()
+    students = StudentSerializer(many=True, read_only=True)
+    assignments = AssignmentBriefSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Classroom
+        fields = ["id", "name", "description", "join_code", "status", "student_count", "students", "assignments", "created_at"]
+        read_only_fields = ["id", "join_code", "created_at"]
 
     def get_student_count(self, obj):
         return obj.students.count()

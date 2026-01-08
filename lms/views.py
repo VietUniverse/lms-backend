@@ -3,15 +3,19 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.conf import settings
+from django.contrib.auth import get_user_model
 import requests
 
 from .models import Classroom, Deck, Assignment, Progress
 from .serializers import (
     ClassroomSerializer,
+    ClassroomDetailSerializer,
     DeckSerializer,
     AssignmentSerializer,
     ProgressSerializer,
 )
+
+User = get_user_model()
 
 
 def index(request):
@@ -35,8 +39,50 @@ class ClassroomViewSet(viewsets.ModelViewSet):
             return Classroom.objects.filter(teacher=user)
         return Classroom.objects.filter(students=user)
 
+    def get_serializer_class(self):
+        if self.action == "retrieve":
+            return ClassroomDetailSerializer
+        return ClassroomSerializer
+
     def perform_create(self, serializer):
         serializer.save(teacher=self.request.user)
+
+    @action(detail=True, methods=["post"], url_path="add_student")
+    def add_student(self, request, pk=None):
+        """Thêm học sinh vào lớp bằng email."""
+        classroom = self.get_object()
+        email = request.data.get("email")
+        
+        if not email:
+            return Response({"error": "Email is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            student = User.objects.get(email=email, role="student")
+        except User.DoesNotExist:
+            return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        if student in classroom.students.all():
+            return Response({"error": "Student already in class"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        classroom.students.add(student)
+        return Response({"message": "Student added successfully"}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="remove_student")
+    def remove_student(self, request, pk=None):
+        """Xóa học sinh khỏi lớp."""
+        classroom = self.get_object()
+        student_id = request.data.get("student_id")
+        
+        if not student_id:
+            return Response({"error": "Student ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            student = User.objects.get(id=student_id)
+        except User.DoesNotExist:
+            return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        classroom.students.remove(student)
+        return Response({"message": "Student removed successfully"}, status=status.HTTP_200_OK)
 
 
 class DeckViewSet(viewsets.ModelViewSet):

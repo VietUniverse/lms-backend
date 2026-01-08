@@ -1,11 +1,21 @@
+import secrets
+import string
+
 from django.conf import settings
 from django.db import models
+
+
+def generate_join_code():
+    """Tạo mã tham gia lớp 6 ký tự."""
+    chars = string.ascii_uppercase + string.digits
+    return ''.join(secrets.choice(chars) for _ in range(6))
 
 
 class Classroom(models.Model):
     """Lớp học do giáo viên quản lý."""
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
+    join_code = models.CharField(max_length=10, unique=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=[("ACTIVE", "Đang hoạt động"), ("FINISHED", "Đã kết thúc"), ("DRAFT", "Bản nháp")],
@@ -22,6 +32,16 @@ class Classroom(models.Model):
         blank=True,
     )
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self.join_code:
+            # Auto-generate unique join code
+            for _ in range(10):  # Try up to 10 times
+                code = generate_join_code()
+                if not Classroom.objects.filter(join_code=code).exists():
+                    self.join_code = code
+                    break
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return self.name

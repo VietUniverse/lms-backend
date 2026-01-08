@@ -17,9 +17,18 @@ SECRET_KEY = env(
     default="django-insecure-*xjv6%^$t&n-o=r$gbqlkl9=5_6r66&qkz#(h=p0b%68$el#9i",
 )
 
-DEBUG = env("DEBUG")
+DEBUG = env.bool("DEBUG", default=True)
 
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["*"])
+# ALLOWED_HOSTS - explicitly set for production
+ALLOWED_HOSTS = env.list(
+    "ALLOWED_HOSTS",
+    default=[
+        "ankilms-062168bef871.herokuapp.com",
+        "lms.ankivn.com",
+        "localhost",
+        "127.0.0.1",
+    ],
+)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
