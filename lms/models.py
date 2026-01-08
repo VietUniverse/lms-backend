@@ -3,8 +3,14 @@ from django.db import models
 
 
 class Classroom(models.Model):
+    """Lớp học do giáo viên quản lý."""
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=[("ACTIVE", "Đang hoạt động"), ("FINISHED", "Đã kết thúc"), ("DRAFT", "Bản nháp")],
+        default="ACTIVE",
+    )
     teacher = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -22,13 +28,56 @@ class Classroom(models.Model):
 
 
 class Deck(models.Model):
+    """Bộ thẻ Anki (.apkg) - file lưu trên Appwrite, chỉ giữ reference ở đây."""
+    teacher = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="decks",
+        null=True,
+        blank=True,
+    )
+    title = models.CharField(max_length=255)
+    # Thay FileField bằng CharField để lưu Appwrite file ID
+    appwrite_file_id = models.CharField(max_length=255, blank=True)
+    appwrite_file_url = models.URLField(max_length=500, blank=True)
+    card_count = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return self.title
+
+
+class Assignment(models.Model):
+    """Bài tập / Kiểm tra - giao cho lớp dựa trên một Deck."""
+    STATUS_CHOICES = [
+        ("PENDING", "Chờ xử lý"),
+        ("ACTIVE", "Đang diễn ra"),
+        ("COMPLETED", "Hoàn thành"),
+    ]
+
+    title = models.CharField(max_length=255)
     classroom = models.ForeignKey(
         Classroom,
         on_delete=models.CASCADE,
-        related_name="decks",
+        related_name="assignments",
     )
-    title = models.CharField(max_length=255)
-    anki_file = models.FileField(upload_to="decks/")
+    deck = models.ForeignKey(
+        Deck,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assignments",
+    )
+    teacher = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="created_assignments",
+    )
+    duration = models.IntegerField(default=45, help_text="Thời gian làm bài (phút)")
+    question_count = models.IntegerField(default=20)
+    shuffle = models.BooleanField(default=True)
+    show_result = models.BooleanField(default=False)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self) -> str:
@@ -36,6 +85,7 @@ class Deck(models.Model):
 
 
 class Progress(models.Model):
+    """Tiến độ học tập của học sinh trên một Deck."""
     student = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,

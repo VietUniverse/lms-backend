@@ -61,6 +61,18 @@ CORS_ALLOWED_ORIGINS = env.list(
         "http://localhost:3000",
     ],
 )
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+]
 
 AUTH_USER_MODEL = "accounts.User"
 
@@ -109,3 +121,11 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
+# ============================================
+# APPWRITE CONFIGURATION (for .apkg file storage)
+# ============================================
+APPWRITE_ENDPOINT = env("APPWRITE_ENDPOINT", default="https://sgp.cloud.appwrite.io/v1")
+APPWRITE_PROJECT_ID = env("APPWRITE_PROJECT_ID", default="695fd05f00280bd0cce6")
+APPWRITE_API_KEY = env("APPWRITE_API_KEY", default="standard_64a3a0274b69dea5189d40cd7e303053293374ea28938e3e02b93c9cc1e974539d7a2d8ae0e0f58b29ae2f1389e2d0e0ef3ed9a2ea6679f2ea771ef7245811488bf1a3dd93dce41bb5b997001097e9932a3544e5f2e78103f2d9f61d7fca59101039d7180727d867437d226be3cab84a9738e13bd62f420cb009a27319836f88")
+APPWRITE_BUCKET_ID = env("APPWRITE_BUCKET_ID", default="695fd372002412b4c017")
