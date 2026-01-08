@@ -58,6 +58,7 @@ CORS_ALLOWED_ORIGINS = env.list(
     "CORS_ALLOWED_ORIGINS",
     default=[
         "https://lms-frontend-is6g.vercel.app",
+        "https://lms.ankivn.com",
         "http://localhost:3000",
     ],
 )
