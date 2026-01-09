@@ -101,52 +101,28 @@ class DeckViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(teacher=self.request.user)
 
-    @action(detail=False, methods=["post"], url_path="upload")
-    def upload_apkg(self, request):
+    @action(detail=False, methods=["post"], url_path="create_from_id")
+    def create_from_id(self, request):
         """
-        Upload file .apkg lên Appwrite và tạo Deck record.
-        Frontend gửi file qua multipart/form-data.
+        Tạo Deck record từ Appwrite File ID (đã upload từ frontend).
         """
-        file = request.FILES.get("file")
-        if not file:
-            return Response({"error": "No file provided"}, status=status.HTTP_400_BAD_REQUEST)
+        file_id = request.data.get("file_id")
+        title = request.data.get("title")
+        file_name = request.data.get("file_name", "unknown.apkg")
 
-        # Validate file extension
-        if not file.name.endswith(".apkg"):
-            return Response({"error": "Only .apkg files are allowed"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Upload to Appwrite
-        try:
-            appwrite_response = self._upload_to_appwrite(file)
-        except Exception as e:
-            return Response({"error": f"Appwrite upload failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if not file_id or not title:
+            return Response({"error": "Missing file_id or title"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Create Deck record
         deck = Deck.objects.create(
             teacher=request.user,
-            title=file.name.replace(".apkg", ""),
-            appwrite_file_id=appwrite_response["$id"],
-            appwrite_file_url=self._get_file_url(appwrite_response["$id"]),
-            card_count=0,  # TODO: Parse .apkg to get actual count
+            title=title,
+            appwrite_file_id=file_id,
+            appwrite_file_url=self._get_file_url(file_id),
+            card_count=0,
         )
 
         return Response(DeckSerializer(deck).data, status=status.HTTP_201_CREATED)
-
-    def _upload_to_appwrite(self, file):
-        """Upload file to Appwrite Storage."""
-        import uuid
-        url = f"{settings.APPWRITE_ENDPOINT}/storage/buckets/{settings.APPWRITE_BUCKET_ID}/files"
-        headers = {
-            "X-Appwrite-Project": settings.APPWRITE_PROJECT_ID,
-            "X-Appwrite-Key": settings.APPWRITE_API_KEY,
-        }
-        file_id = str(uuid.uuid4())
-        files = {"file": (file.name, file.read(), file.content_type or "application/octet-stream")}
-        data = {"fileId": file_id}
-
-        response = requests.post(url, headers=headers, files=files, data=data)
-        response.raise_for_status()
-        return response.json()
 
     def _get_file_url(self, file_id):
         """Get public/download URL for a file."""
