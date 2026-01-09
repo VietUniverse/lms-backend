@@ -128,6 +128,9 @@ class Test(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        db_table = 'lms_assignment'  # Keep using existing table name
+
     def __str__(self) -> str:
         return self.title
 
@@ -150,6 +153,7 @@ class TestSubmission(models.Model):
     submitted_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'lms_assignmentsubmission'  # Keep using existing table name
         unique_together = ("test", "student")
 
     def __str__(self) -> str:
