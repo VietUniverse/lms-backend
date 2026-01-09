@@ -18,11 +18,7 @@ class Migration(migrations.Migration):
             name='decks',
             field=models.ManyToManyField(blank=True, related_name='classrooms', to='lms.deck'),
         ),
-        migrations.AddField(
-            model_name='classroom',
-            name='join_code',
-            field=models.CharField(blank=True, max_length=10, unique=True),
-        ),
+
         migrations.CreateModel(
             name='AssignmentSubmission',
             fields=[
