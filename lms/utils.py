@@ -39,16 +39,37 @@ def parse_anki_file(apkg_path: str) -> list[dict]:
             zip_ref.extractall(temp_dir)
         
         # Find the SQLite database
-        db_path = os.path.join(temp_dir, "collection.anki2")
-        if not os.path.exists(db_path):
-            db_path = os.path.join(temp_dir, "collection.anki21")
+        # Some .apkg files have both collection.anki2 and collection.anki21
+        # We need to find the one with actual data
+        db_path_20 = os.path.join(temp_dir, "collection.anki2")
+        db_path_21 = os.path.join(temp_dir, "collection.anki21")
         
-        if not os.path.exists(db_path):
+        candidates = []
+        if os.path.exists(db_path_20): candidates.append(db_path_20)
+        if os.path.exists(db_path_21): candidates.append(db_path_21)
+        
+        if not candidates:
             print("Error: collection.anki2 not found in .apkg")
             return []
+
+        # Function to count notes in a DB
+        def count_notes(path):
+            try:
+                c = sqlite3.connect(path)
+                curr = c.cursor()
+                curr.execute("SELECT count(*) FROM notes")
+                count = curr.fetchone()[0]
+                c.close()
+                return count
+            except:
+                return -1
+
+        # Pick the DB with the most notes
+        best_db = max(candidates, key=count_notes)
+        print(f"Index: Using {os.path.basename(best_db)} with {count_notes(best_db)} notes.")
         
         # Connect to SQLite
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(best_db)
         cursor = conn.cursor()
         
         # Query the notes table
