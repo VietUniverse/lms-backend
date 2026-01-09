@@ -69,21 +69,34 @@ def parse_anki_file(apkg_path: str) -> list[dict]:
         print(f"Index: Using {os.path.basename(best_db)} with {count_notes(best_db)} notes.")
         
         # Connect to SQLite
+        # Connect to SQLite
         conn = sqlite3.connect(best_db)
         cursor = conn.cursor()
         
-        # Query the notes table
-        # fields are separated by 0x1f (unit separator)
+        # Query the notes table but ONLY for notes that have associated cards
+        # This matches apkg.py logic: "Join bảng cards để biết Note thuộc Deck nào"
+        # Since we are importing the whole file as one Deck, we just want to ensure
+        # we only get Notes that are actually used in Cards.
         try:
+            # Get valid Note IDs from cards table
+            cursor.execute("SELECT DISTINCT nid FROM cards")
+            valid_nids = {row[0] for row in cursor.fetchall()}
+            
+            # Get all notes
             cursor.execute("SELECT id, flds FROM notes")
             rows = cursor.fetchall()
-            print(f"Found {len(rows)} notes in Anki database.")
+            
+            print(f"Found {len(rows)} raw notes. Valid notes with cards: {len(valid_nids)}")
         except sqlite3.OperationalError as e:
             print(f"SQLite Error: {e}")
             conn.close()
             return []
         
         for note_id, fields_str in rows:
+            # Filter: Only process notes that correspond to actual cards
+            if note_id not in valid_nids:
+                continue
+
             # 0x1f is the standard separator for Anki fields
             fields = fields_str.split('\x1f')
             
@@ -93,7 +106,6 @@ def parse_anki_file(apkg_path: str) -> list[dict]:
             front = fields[0].strip()
             
             # Combine all remaining fields for the Back (Answer)
-            # This ensures we don't lose data for complex Note Types
             if len(fields) > 1:
                 # Use <hr> or <br> to separate fields visually
                 back = "<br><hr><br>".join([f.strip() for f in fields[1:] if f.strip()])
@@ -111,7 +123,7 @@ def parse_anki_file(apkg_path: str) -> list[dict]:
             })
         
         conn.close()
-        print(f"Successfully parsed {len(cards)} cards.")
+        print(f"Successfully parsed {len(cards)} valid notes (cards).")
         
     except Exception as e:
         print(f"Parse error: {e}")
