@@ -7,7 +7,7 @@ from django.contrib.auth import get_user_model
 from django.db import models
 import requests
 
-from .models import Classroom, Deck, Card, Assignment, Progress
+from .models import Classroom, Deck, Card, Test, Progress
 from .utils import download_from_appwrite, parse_anki_file
 import tempfile
 import os
@@ -15,7 +15,7 @@ from .serializers import (
     ClassroomSerializer,
     ClassroomDetailSerializer,
     DeckSerializer,
-    AssignmentSerializer,
+    TestSerializer,
     ProgressSerializer,
 )
 
@@ -136,10 +136,10 @@ class DeckViewSet(viewsets.ModelViewSet):
             return Deck.objects.filter(teacher=user)
         # Students có thể xem decks từ các lớp họ enrolled
         enrolled_classes = user.enrolled_classes.all()
-        # Lấy Decks được gán trực tiếp vào Class HOẶC qua Assignment (backward compat)
+        # Lấy Decks được gán trực tiếp vào Class HOẶC qua Test (backward compat)
         return Deck.objects.filter(
             models.Q(classrooms__in=enrolled_classes) |
-            models.Q(assignments__classroom__in=enrolled_classes)
+            models.Q(tests__classroom__in=enrolled_classes)
         ).distinct()
 
     def perform_create(self, serializer):
@@ -244,32 +244,32 @@ class DeckViewSet(viewsets.ModelViewSet):
              print(f"Appwrite delete error: {response.text}")
 
 
-class AssignmentViewSet(viewsets.ModelViewSet):
-    """API endpoint cho Assignment (bài tập/kiểm tra)."""
-    serializer_class = AssignmentSerializer
+class TestViewSet(viewsets.ModelViewSet):
+    """API endpoint cho Test (bài kiểm tra)."""
+    serializer_class = TestSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
         if user.role == "teacher":
-            return Assignment.objects.filter(teacher=user)
-        # Students see assignments from their enrolled classes
-        return Assignment.objects.filter(classroom__students=user)
+            return Test.objects.filter(teacher=user)
+        # Students see tests from their enrolled classes
+        return Test.objects.filter(classroom__students=user)
 
     def perform_create(self, serializer):
         serializer.save(teacher=self.request.user)
     
     @action(detail=True, methods=["get"])
     def stats(self, request, pk=None):
-        """Thống kê kết quả bài tập."""
-        assignment = self.get_object()
+        """Thống kê kết quả bài kiểm tra."""
+        test = self.get_object()
         
         # Check permission (only teacher)
-        if request.user.role != "teacher" and assignment.teacher != request.user:
+        if request.user.role != "teacher" and test.teacher != request.user:
              return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
              
-        submissions = assignment.submissions.all()
-        total_students = assignment.classroom.students.count()
+        submissions = test.submissions.all()
+        total_students = test.classroom.students.count()
         submitted_count = submissions.count()
         
         avg_score = 0

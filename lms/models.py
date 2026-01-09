@@ -95,8 +95,8 @@ class Card(models.Model):
         return f"{self.deck.title} - {self.front[:50]}..."
 
 
-class Assignment(models.Model):
-    """Bài tập / Kiểm tra - giao cho lớp dựa trên một Deck."""
+class Test(models.Model):
+    """Bài kiểm tra - giáo viên tạo từ Deck, học sinh làm bài có điểm."""
     STATUS_CHOICES = [
         ("PENDING", "Chờ xử lý"),
         ("ACTIVE", "Đang diễn ra"),
@@ -107,19 +107,19 @@ class Assignment(models.Model):
     classroom = models.ForeignKey(
         Classroom,
         on_delete=models.CASCADE,
-        related_name="assignments",
+        related_name="tests",
     )
     deck = models.ForeignKey(
         Deck,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="assignments",
+        related_name="tests",
     )
     teacher = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="created_assignments",
+        related_name="created_tests",
     )
     duration = models.IntegerField(default=45, help_text="Thời gian làm bài (phút)")
     question_count = models.IntegerField(default=20)
@@ -132,17 +132,17 @@ class Assignment(models.Model):
         return self.title
 
 
-class AssignmentSubmission(models.Model):
-    """Kết quả bài làm của học sinh."""
-    assignment = models.ForeignKey(
-        Assignment,
+class TestSubmission(models.Model):
+    """Kết quả bài kiểm tra của học sinh."""
+    test = models.ForeignKey(
+        Test,
         on_delete=models.CASCADE,
         related_name="submissions",
     )
     student = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="submissions",
+        related_name="test_submissions",
     )
     score = models.FloatField(default=0.0)
     total_questions = models.IntegerField(default=0)
@@ -150,10 +150,10 @@ class AssignmentSubmission(models.Model):
     submitted_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ("assignment", "student")
+        unique_together = ("test", "student")
 
     def __str__(self) -> str:
-        return f"{self.student} - {self.assignment} - {self.score}"
+        return f"{self.student} - {self.test} - {self.score}"
 
 
 class Progress(models.Model):

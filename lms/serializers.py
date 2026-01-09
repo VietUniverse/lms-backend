@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Classroom, Deck, Assignment, Progress
+from .models import Classroom, Deck, Test, Progress
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -27,12 +27,12 @@ class DeckSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "status"]
 
 
-class AssignmentBriefSerializer(serializers.ModelSerializer):
-    """Serializer ngắn gọn cho bài tập."""
+class TestBriefSerializer(serializers.ModelSerializer):
+    """Serializer ngắn gọn cho bài kiểm tra."""
     deck_title = serializers.CharField(source="deck.title", read_only=True, default=None)
 
     class Meta:
-        model = Assignment
+        model = Test
         fields = ["id", "title", "deck_title", "status", "created_at"]
 
 
@@ -52,12 +52,12 @@ class ClassroomDetailSerializer(serializers.ModelSerializer):
     """Serializer chi tiết cho trang quản lý lớp."""
     student_count = serializers.SerializerMethodField()
     students = StudentSerializer(many=True, read_only=True)
-    assignments = AssignmentBriefSerializer(many=True, read_only=True)
+    tests = TestBriefSerializer(many=True, read_only=True)
     decks = DeckSerializer(many=True, read_only=True)
 
     class Meta:
         model = Classroom
-        fields = ["id", "name", "description", "join_code", "status", "student_count", "students", "assignments", "decks", "created_at"]
+        fields = ["id", "name", "description", "join_code", "status", "student_count", "students", "tests", "decks", "created_at"]
         read_only_fields = ["id", "join_code", "created_at"]
 
     def get_student_count(self, obj):
@@ -67,7 +67,7 @@ class ClassroomDetailSerializer(serializers.ModelSerializer):
 
 
 
-class AssignmentSerializer(serializers.ModelSerializer):
+class TestSerializer(serializers.ModelSerializer):
     class_id = serializers.PrimaryKeyRelatedField(
         queryset=Classroom.objects.all(), source="classroom", write_only=True
     )
@@ -76,7 +76,7 @@ class AssignmentSerializer(serializers.ModelSerializer):
     )
 
     class Meta:
-        model = Assignment
+        model = Test
         fields = [
             "id",
             "title",

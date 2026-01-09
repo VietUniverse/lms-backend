@@ -20,18 +20,18 @@ class Migration(migrations.Migration):
         ),
 
         migrations.CreateModel(
-            name='AssignmentSubmission',
+            name='TestSubmission',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('score', models.FloatField(default=0.0)),
                 ('total_questions', models.IntegerField(default=0)),
                 ('correct_answers', models.IntegerField(default=0)),
                 ('submitted_at', models.DateTimeField(auto_now_add=True)),
-                ('assignment', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='submissions', to='lms.assignment')),
-                ('student', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='submissions', to=settings.AUTH_USER_MODEL)),
+                ('test', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='submissions', to='lms.test')),
+                ('student', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='test_submissions', to=settings.AUTH_USER_MODEL)),
             ],
             options={
-                'unique_together': {('assignment', 'student')},
+                'unique_together': {('test', 'student')},
             },
         ),
     ]

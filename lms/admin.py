@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Classroom, Deck, Assignment, Progress
+from .models import Classroom, Deck, Test, Progress
 
 
 @admin.register(Classroom)
@@ -15,8 +15,8 @@ class DeckAdmin(admin.ModelAdmin):
     search_fields = ("title",)
 
 
-@admin.register(Assignment)
-class AssignmentAdmin(admin.ModelAdmin):
+@admin.register(Test)
+class TestAdmin(admin.ModelAdmin):
     list_display = ("title", "classroom", "deck", "duration", "status", "created_at")
     list_filter = ("status",)
 

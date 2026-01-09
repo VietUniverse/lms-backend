@@ -5,7 +5,7 @@ from . import views
 router = DefaultRouter()
 router.register(r"classes", views.ClassroomViewSet, basename="classroom")
 router.register(r"decks", views.DeckViewSet, basename="deck")
-router.register(r"assignments", views.AssignmentViewSet, basename="assignment")
+router.register(r"tests", views.TestViewSet, basename="test")
 router.register(r"progress", views.ProgressViewSet, basename="progress")
 
 urlpatterns = [
