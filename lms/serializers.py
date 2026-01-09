@@ -57,9 +57,10 @@ class DeckSerializer(serializers.ModelSerializer):
             "appwrite_file_id",
             "appwrite_file_url",
             "card_count",
+            "status",
             "created_at",
         ]
-        read_only_fields = ["id", "created_at"]
+        read_only_fields = ["id", "created_at", "status"]
 
 
 class AssignmentSerializer(serializers.ModelSerializer):

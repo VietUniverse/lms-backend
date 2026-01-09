@@ -6,7 +6,10 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 import requests
 
-from .models import Classroom, Deck, Assignment, Progress
+from .models import Classroom, Deck, Card, Assignment, Progress
+from .utils import download_from_appwrite, parse_anki_file
+import tempfile
+import os
 from .serializers import (
     ClassroomSerializer,
     ClassroomDetailSerializer,
@@ -105,24 +108,75 @@ class DeckViewSet(viewsets.ModelViewSet):
     def create_from_id(self, request):
         """
         Tạo Deck record từ Appwrite File ID (đã upload từ frontend).
+        Parse file .apkg để lấy thẻ và trả về preview.
         """
         file_id = request.data.get("file_id")
         title = request.data.get("title")
-        file_name = request.data.get("file_name", "unknown.apkg")
 
         if not file_id or not title:
             return Response({"error": "Missing file_id or title"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Create Deck record
+        # Create Deck record with DRAFT status
         deck = Deck.objects.create(
             teacher=request.user,
             title=title,
             appwrite_file_id=file_id,
             appwrite_file_url=self._get_file_url(file_id),
             card_count=0,
+            status="DRAFT",
         )
 
-        return Response(DeckSerializer(deck).data, status=status.HTTP_201_CREATED)
+        # Download and parse the Anki file
+        temp_file = None
+        try:
+            temp_file = tempfile.NamedTemporaryFile(suffix=".apkg", delete=False)
+            temp_file.close()
+            download_from_appwrite(file_id, temp_file.name)
+            parsed_cards = parse_anki_file(temp_file.name)
+
+            # Bulk create Card objects
+            card_objects = [
+                Card(
+                    deck=deck,
+                    front=c["front"],
+                    back=c["back"],
+                    note_id=c["note_id"],
+                )
+                for c in parsed_cards
+            ]
+            Card.objects.bulk_create(card_objects)
+
+            # Update card count
+            deck.card_count = len(card_objects)
+            deck.save()
+
+            # Prepare preview (first 5 cards)
+            preview = [
+                {"front": c.front[:200], "back": c.back[:200]}
+                for c in card_objects[:5]
+            ]
+
+            return Response({
+                "deck": DeckSerializer(deck).data,
+                "preview": preview,
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            # Cleanup deck if parsing failed
+            deck.delete()
+            return Response({"error": f"Failed to parse Anki file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            # Cleanup temp file
+            if temp_file and os.path.exists(temp_file.name):
+                os.unlink(temp_file.name)
+
+    @action(detail=True, methods=["post"], url_path="activate")
+    def activate_deck(self, request, pk=None):
+        """Kích hoạt deck sau khi giáo viên xác nhận preview."""
+        deck = self.get_object()
+        deck.status = "ACTIVE"
+        deck.save()
+        return Response({"message": "Deck activated", "deck": DeckSerializer(deck).data})
 
     def _get_file_url(self, file_id):
         """Get public/download URL for a file."""

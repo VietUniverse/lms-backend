@@ -49,6 +49,12 @@ class Classroom(models.Model):
 
 class Deck(models.Model):
     """Bộ thẻ Anki (.apkg) - file lưu trên Appwrite, chỉ giữ reference ở đây."""
+    STATUS_CHOICES = [
+        ("PROCESSING", "Đang xử lý"),
+        ("DRAFT", "Bản nháp"),
+        ("ACTIVE", "Đang hoạt động"),
+    ]
+
     teacher = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -61,10 +67,27 @@ class Deck(models.Model):
     appwrite_file_id = models.CharField(max_length=255, blank=True)
     appwrite_file_url = models.URLField(max_length=500, blank=True)
     card_count = models.IntegerField(default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PROCESSING")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self) -> str:
         return self.title
+
+
+class Card(models.Model):
+    """Một thẻ Anki thuộc về một Deck."""
+    deck = models.ForeignKey(
+        Deck,
+        on_delete=models.CASCADE,
+        related_name="cards",
+    )
+    front = models.TextField(help_text="Mặt trước (câu hỏi)")
+    back = models.TextField(help_text="Mặt sau (trả lời)")
+    note_id = models.CharField(max_length=100, blank=True, help_text="ID gốc từ Anki")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"{self.deck.title} - {self.front[:50]}..."
 
 
 class Assignment(models.Model):
