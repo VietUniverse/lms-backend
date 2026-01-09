@@ -128,6 +128,26 @@ class DeckViewSet(viewsets.ModelViewSet):
         """Get public/download URL for a file."""
         return f"{settings.APPWRITE_ENDPOINT}/storage/buckets/{settings.APPWRITE_BUCKET_ID}/files/{file_id}/view?project={settings.APPWRITE_PROJECT_ID}"
 
+    def perform_destroy(self, instance):
+        """Xóa file trên Appwrite khi xóa Deck."""
+        if instance.appwrite_file_id:
+            try:
+                self._delete_from_appwrite(instance.appwrite_file_id)
+            except Exception as e:
+                # Log error but don't stop deletion
+                print(f"Failed to delete Appwrite file: {e}")
+        instance.delete()
+
+    def _delete_from_appwrite(self, file_id):
+        url = f"{settings.APPWRITE_ENDPOINT}/storage/buckets/{settings.APPWRITE_BUCKET_ID}/files/{file_id}"
+        headers = {
+            "X-Appwrite-Project": settings.APPWRITE_PROJECT_ID,
+            "X-Appwrite-Key": settings.APPWRITE_API_KEY,
+        }
+        response = requests.delete(url, headers=headers)
+        if response.status_code >= 400:
+             print(f"Appwrite delete error: {response.text}")
+
 
 class AssignmentViewSet(viewsets.ModelViewSet):
     """API endpoint cho Assignment (bài tập/kiểm tra)."""
