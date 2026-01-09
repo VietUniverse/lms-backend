@@ -161,6 +161,82 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         classroom.decks.remove(deck)
         return Response({"message": "Deck removed from class"}, status=status.HTTP_200_OK)
 
+    @action(detail=False, methods=["get"], url_path="preview")
+    def preview(self, request):
+        """Preview class info by join code (for students before joining)."""
+        code = request.query_params.get("code", "").upper()
+        
+        if not code:
+            return Response({"error": "Code is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            classroom = Classroom.objects.get(join_code=code, status="ACTIVE")
+        except Classroom.DoesNotExist:
+            return Response({"error": "Không tìm thấy lớp học với mã này"}, status=status.HTTP_404_NOT_FOUND)
+        
+        return Response({
+            "id": classroom.id,
+            "name": classroom.name,
+            "teacher_name": classroom.teacher.full_name if hasattr(classroom.teacher, 'full_name') else classroom.teacher.email,
+            "student_count": classroom.students.count(),
+        })
+
+    @action(detail=False, methods=["post"], url_path="join")
+    def join_class(self, request):
+        """Student joins a class using join code."""
+        from django.db import transaction
+        
+        user = request.user
+        
+        # Only students can join
+        if user.role != "student":
+            return Response({"error": "Only students can join classes"}, status=status.HTTP_403_FORBIDDEN)
+        
+        code = request.data.get("code", "").upper()
+        
+        if not code:
+            return Response({"error": "Code is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            classroom = Classroom.objects.get(join_code=code, status="ACTIVE")
+        except Classroom.DoesNotExist:
+            return Response({"error": "Không tìm thấy lớp học với mã này"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if already joined
+        if user in classroom.students.all():
+            return Response({"error": "Bạn đã tham gia lớp này rồi"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Add student with atomic transaction
+        with transaction.atomic():
+            classroom.students.add(user)
+        
+        return Response({
+            "message": "Tham gia lớp thành công",
+            "classroom": {
+                "id": classroom.id,
+                "name": classroom.name,
+            }
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="leave")
+    def leave_class(self, request, pk=None):
+        """Student leaves a class."""
+        user = request.user
+        
+        # Only students can leave
+        if user.role != "student":
+            return Response({"error": "Only students can leave classes"}, status=status.HTTP_403_FORBIDDEN)
+        
+        classroom = self.get_object()
+        
+        # Check if student is in class
+        if user not in classroom.students.all():
+            return Response({"error": "Bạn không ở trong lớp này"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        classroom.students.remove(user)
+        
+        return Response({"message": "Đã rời khỏi lớp"}, status=status.HTTP_200_OK)
+
 
 class DeckViewSet(viewsets.ModelViewSet):
     """API endpoint cho Deck (Anki decks)."""
