@@ -44,31 +44,20 @@ def parse_anki_file(apkg_path: str) -> list[dict]:
         db_path_20 = os.path.join(temp_dir, "collection.anki2")
         db_path_21 = os.path.join(temp_dir, "collection.anki21")
         
-        candidates = []
-        if os.path.exists(db_path_20): candidates.append(db_path_20)
-        if os.path.exists(db_path_21): candidates.append(db_path_21)
-        
-        if not candidates:
-            print("Error: collection.anki2 not found in .apkg")
+        # Anki 2.1.50+ uses collection.anki21 for real data
+        # collection.anki2 is often a dummy/placeholder
+        best_db = None
+        if os.path.exists(db_path_21):
+            best_db = db_path_21
+            print("Using DB: collection.anki21 (Priority)")
+        elif os.path.exists(db_path_20):
+            best_db = db_path_20
+            print("Using DB: collection.anki2 (Fallback)")
+            
+        if not best_db:
+            print("Error: No Anki database found in .apkg")
             return []
 
-        # Function to count notes in a DB
-        def count_notes(path):
-            try:
-                c = sqlite3.connect(path)
-                curr = c.cursor()
-                curr.execute("SELECT count(*) FROM notes")
-                count = curr.fetchone()[0]
-                c.close()
-                return count
-            except:
-                return -1
-
-        # Pick the DB with the most notes
-        best_db = max(candidates, key=count_notes)
-        print(f"Index: Using {os.path.basename(best_db)} with {count_notes(best_db)} notes.")
-        
-        # Connect to SQLite
         # Connect to SQLite
         conn = sqlite3.connect(best_db)
         cursor = conn.cursor()
