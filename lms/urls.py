@@ -10,5 +10,6 @@ router.register(r"progress", views.ProgressViewSet, basename="progress")
 
 urlpatterns = [
     path("", views.index),
+    path("dashboard/stats/", views.dashboard_stats),
     path("", include(router.urls)),
 ]

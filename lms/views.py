@@ -1,7 +1,7 @@
 from django.http import JsonResponse
 from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import models
@@ -24,6 +24,43 @@ User = get_user_model()
 
 def index(request):
     return JsonResponse({"status": "ok", "message": "LMS API is running"})
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def dashboard_stats(request):
+    """Return dashboard statistics for teacher."""
+    user = request.user
+    
+    if user.role != "teacher":
+        return Response({"error": "Only teachers can access this"}, status=status.HTTP_403_FORBIDDEN)
+    
+    # Count students from all classes
+    total_students = 0
+    for classroom in Classroom.objects.filter(teacher=user):
+        total_students += classroom.students.count()
+    
+    # Count decks
+    total_decks = Deck.objects.filter(teacher=user).count()
+    
+    # Calculate average score from test submissions
+    tests = Test.objects.filter(teacher=user)
+    from .models import TestSubmission
+    submissions = TestSubmission.objects.filter(test__in=tests)
+    
+    avg_score = 0
+    if submissions.exists():
+        avg_score = round(submissions.aggregate(avg=models.Avg('score'))['avg'] or 0, 2)
+    
+    # Count pending assignments/tests
+    pending_assignments = tests.filter(status="PENDING").count()
+    
+    return Response({
+        "total_students": total_students,
+        "total_decks": total_decks,
+        "average_score": avg_score,
+        "pending_assignments": pending_assignments,
+    })
 
 
 class IsTeacher(permissions.BasePermission):
@@ -289,6 +326,23 @@ class TestViewSet(viewsets.ModelViewSet):
                 } for s in submissions
             ]
         })
+
+    def destroy(self, request, *args, **kwargs):
+        """Delete a test with proper error handling."""
+        try:
+            instance = self.get_object()
+            # First delete related submissions to avoid FK issues
+            instance.submissions.all().delete()
+            instance.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Exception as e:
+            import traceback
+            print(f"DELETE Test error: {e}")
+            print(traceback.format_exc())
+            return Response(
+                {"error": f"Failed to delete test: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class ProgressViewSet(viewsets.ModelViewSet):
