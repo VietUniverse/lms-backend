@@ -12,6 +12,21 @@ class StudentSerializer(serializers.ModelSerializer):
         fields = ["id", "email", "full_name"]
 
 
+class DeckSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Deck
+        fields = [
+            "id",
+            "title",
+            "appwrite_file_id",
+            "appwrite_file_url",
+            "card_count",
+            "status",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at", "status"]
+
+
 class AssignmentBriefSerializer(serializers.ModelSerializer):
     """Serializer ngắn gọn cho bài tập."""
     deck_title = serializers.CharField(source="deck.title", read_only=True, default=None)
@@ -38,29 +53,18 @@ class ClassroomDetailSerializer(serializers.ModelSerializer):
     student_count = serializers.SerializerMethodField()
     students = StudentSerializer(many=True, read_only=True)
     assignments = AssignmentBriefSerializer(many=True, read_only=True)
+    decks = DeckSerializer(many=True, read_only=True)
 
     class Meta:
         model = Classroom
-        fields = ["id", "name", "description", "join_code", "status", "student_count", "students", "assignments", "created_at"]
+        fields = ["id", "name", "description", "join_code", "status", "student_count", "students", "assignments", "decks", "created_at"]
         read_only_fields = ["id", "join_code", "created_at"]
 
     def get_student_count(self, obj):
         return obj.students.count()
 
 
-class DeckSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Deck
-        fields = [
-            "id",
-            "title",
-            "appwrite_file_id",
-            "appwrite_file_url",
-            "card_count",
-            "status",
-            "created_at",
-        ]
-        read_only_fields = ["id", "created_at", "status"]
+
 
 
 class AssignmentSerializer(serializers.ModelSerializer):

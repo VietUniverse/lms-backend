@@ -31,6 +31,11 @@ class Classroom(models.Model):
         related_name="enrolled_classes",
         blank=True,
     )
+    decks = models.ManyToManyField(
+        "Deck",
+        related_name="classrooms",
+        blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
@@ -125,6 +130,30 @@ class Assignment(models.Model):
 
     def __str__(self) -> str:
         return self.title
+
+
+class AssignmentSubmission(models.Model):
+    """Kết quả bài làm của học sinh."""
+    assignment = models.ForeignKey(
+        Assignment,
+        on_delete=models.CASCADE,
+        related_name="submissions",
+    )
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="submissions",
+    )
+    score = models.FloatField(default=0.0)
+    total_questions = models.IntegerField(default=0)
+    correct_answers = models.IntegerField(default=0)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("assignment", "student")
+
+    def __str__(self) -> str:
+        return f"{self.student} - {self.assignment} - {self.score}"
 
 
 class Progress(models.Model):

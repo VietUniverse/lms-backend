@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import models
 import requests
 
 from .models import Classroom, Deck, Card, Assignment, Progress
@@ -87,6 +88,42 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         classroom.students.remove(student)
         return Response({"message": "Student removed successfully"}, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=["post"], url_path="add_deck")
+    def add_deck(self, request, pk=None):
+        """Thêm deck vào lớp."""
+        classroom = self.get_object()
+        deck_id = request.data.get("deck_id")
+        
+        if not deck_id:
+            return Response({"error": "Deck ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            deck = Deck.objects.get(id=deck_id)
+        except Deck.DoesNotExist:
+            return Response({"error": "Deck not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if deck in classroom.decks.all():
+            return Response({"error": "Deck already in class"}, status=status.HTTP_400_BAD_REQUEST)
+            
+        classroom.decks.add(deck)
+        return Response({"message": "Deck added to class"}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="remove_deck")
+    def remove_deck(self, request, pk=None):
+        """Xóa deck khỏi lớp."""
+        classroom = self.get_object()
+        deck_id = request.data.get("deck_id")
+        
+        if not deck_id:
+            return Response({"error": "Deck ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        deck = Deck.objects.filter(id=deck_id).first()
+        if not deck:
+             return Response({"error": "Deck not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        classroom.decks.remove(deck)
+        return Response({"message": "Deck removed from class"}, status=status.HTTP_200_OK)
+
 
 class DeckViewSet(viewsets.ModelViewSet):
     """API endpoint cho Deck (Anki decks)."""
@@ -99,7 +136,11 @@ class DeckViewSet(viewsets.ModelViewSet):
             return Deck.objects.filter(teacher=user)
         # Students có thể xem decks từ các lớp họ enrolled
         enrolled_classes = user.enrolled_classes.all()
-        return Deck.objects.filter(assignments__classroom__in=enrolled_classes).distinct()
+        # Lấy Decks được gán trực tiếp vào Class HOẶC qua Assignment (backward compat)
+        return Deck.objects.filter(
+            models.Q(classrooms__in=enrolled_classes) |
+            models.Q(assignments__classroom__in=enrolled_classes)
+        ).distinct()
 
     def perform_create(self, serializer):
         serializer.save(teacher=self.request.user)
@@ -217,6 +258,37 @@ class AssignmentViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(teacher=self.request.user)
+    
+    @action(detail=True, methods=["get"])
+    def stats(self, request, pk=None):
+        """Thống kê kết quả bài tập."""
+        assignment = self.get_object()
+        
+        # Check permission (only teacher)
+        if request.user.role != "teacher" and assignment.teacher != request.user:
+             return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+             
+        submissions = assignment.submissions.all()
+        total_students = assignment.classroom.students.count()
+        submitted_count = submissions.count()
+        
+        avg_score = 0
+        if submitted_count > 0:
+            avg_score = sum(s.score for s in submissions) / submitted_count
+            
+        return Response({
+            "total_students": total_students,
+            "submitted_count": submitted_count,
+            "avg_score": round(avg_score, 2),
+            "submissions": [
+                {
+                    "student_name": s.student.full_name,
+                    "email": s.student.email,
+                    "score": s.score,
+                    "submitted_at": s.submitted_at
+                } for s in submissions
+            ]
+        })
 
 
 class ProgressViewSet(viewsets.ModelViewSet):
