@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import models
+from django.db.models import Sum, Q
 import requests
 
 from .models import Classroom, Deck, Card, Test, Progress
@@ -236,6 +236,57 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         classroom.students.remove(user)
         
         return Response({"message": "Đã rời khỏi lớp"}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["get"], url_path="leaderboard")
+    def leaderboard(self, request, pk=None):
+        """Get class leaderboard by cards learned (optimized with annotate)."""
+        classroom = self.get_object()
+        decks = classroom.decks.all()
+        
+        # Calculate total in 1 query using annotate
+        leaderboard_data = classroom.students.annotate(
+            total_cards=Sum(
+                'progress__cards_learned', 
+                filter=Q(progress__deck__in=decks)
+            )
+        ).order_by('-total_cards').values('id', 'full_name', 'email', 'total_cards')
+
+        # Format data and add rank
+        response_data = [
+            {
+                "student_id": item['id'],
+                "name": item['full_name'] or item['email'],
+                "cards_learned": item['total_cards'] or 0,
+                "rank": index + 1
+            }
+            for index, item in enumerate(leaderboard_data)
+        ]
+        
+        return Response(response_data)
+
+    @action(detail=True, methods=["get"], url_path="my-progress")
+    def my_progress(self, request, pk=None):
+        """Get current user's progress in this class."""
+        classroom = self.get_object()
+        user = request.user
+        
+        progress_data = []
+        for deck in classroom.decks.all():
+            prog, _ = Progress.objects.get_or_create(student=user, deck=deck)
+            total_cards = deck.card_count or 0
+            cards_learned = prog.cards_learned or 0
+            percent = round((cards_learned / total_cards * 100) if total_cards > 0 else 0, 1)
+            
+            progress_data.append({
+                "deck_id": deck.id,
+                "deck_title": deck.title,
+                "cards_learned": cards_learned,
+                "cards_to_review": prog.cards_to_review,
+                "total_cards": total_cards,
+                "percent": percent,
+            })
+        
+        return Response(progress_data)
 
 
 class DeckViewSet(viewsets.ModelViewSet):
