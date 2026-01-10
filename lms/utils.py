@@ -26,82 +26,126 @@ def download_from_appwrite(file_id: str, dest_path: str) -> None:
 
 def parse_anki_file(apkg_path: str) -> list[dict]:
     """
-    Parse an Anki .apkg file and extract cards.
-    Handles multiple Note Types by treating the first field as Front
-    and combining all other fields as Back.
+    Parse an Anki .apkg file, extract cards, and upload media to Appwrite.
     """
+    import json
+    import re
+
     cards = []
     temp_dir = tempfile.mkdtemp()
     
+    # Appwrite Config
+    appwrite_url = f"{settings.APPWRITE_ENDPOINT}/storage/buckets/{settings.APPWRITE_BUCKET_ID}/files"
+    headers = {
+        "X-Appwrite-Project": settings.APPWRITE_PROJECT_ID,
+        "X-Appwrite-Key": settings.APPWRITE_API_KEY,
+    }
+
     try:
-        # Extract the .apkg (it's a ZIP file)
+        # Extract the .apkg
         with zipfile.ZipFile(apkg_path, 'r') as zip_ref:
             zip_ref.extractall(temp_dir)
         
-        # Find the SQLite database
-        # Some .apkg files have both collection.anki2 and collection.anki21
-        # We need to find the one with actual data
+        # 1. Handle Media
+        media_map = {}
+        media_file_path = os.path.join(temp_dir, "media")
+        url_mapping = {}  # filename -> public_url
+
+        if os.path.exists(media_file_path):
+            try:
+                with open(media_file_path, 'r') as f:
+                    media_map = json.load(f) # {"0": "image.jpg", ...}
+                
+                print(f"Found {len(media_map)} media files.")
+
+                # Upload each media file
+                for zip_name, filename in media_map.items():
+                    # Skip if not an image (audio/video support can be added later)
+                    if not any(filename.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp']):
+                         continue
+
+                    file_path = os.path.join(temp_dir, zip_name)
+                    if os.path.exists(file_path):
+                        # Upload to Appwrite
+                        try:
+                            with open(file_path, 'rb') as img_file:
+                                files = {'fileId': 'unique()', 'file': (filename, img_file)}
+                                # Use separate headers for upload because 'Content-Type' is set by requests
+                                upload_headers = {
+                                    "X-Appwrite-Project": settings.APPWRITE_PROJECT_ID,
+                                    "X-Appwrite-Key": settings.APPWRITE_API_KEY,
+                                }
+                                res = requests.post(appwrite_url, headers=upload_headers, files=files)
+                                
+                                if res.status_code in [200, 201]:
+                                    file_id = res.json()['$id']
+                                    # Construct View URL
+                                    view_url = f"{settings.APPWRITE_ENDPOINT}/storage/buckets/{settings.APPWRITE_BUCKET_ID}/files/{file_id}/view?project={settings.APPWRITE_PROJECT_ID}"
+                                    url_mapping[filename] = view_url
+                                else:
+                                    print(f"Failed to upload {filename}: {res.text}")
+                        except Exception as e:
+                            print(f"Error uploading {filename}: {e}")
+            except Exception as e:
+                print(f"Error processing media file: {e}")
+
+        # 2. Find Database
         db_path_20 = os.path.join(temp_dir, "collection.anki2")
         db_path_21 = os.path.join(temp_dir, "collection.anki21")
-        
-        # Anki 2.1.50+ uses collection.anki21 for real data
-        # collection.anki2 is often a dummy/placeholder
-        best_db = None
-        if os.path.exists(db_path_21):
-            best_db = db_path_21
-            print("Using DB: collection.anki21 (Priority)")
-        elif os.path.exists(db_path_20):
-            best_db = db_path_20
-            print("Using DB: collection.anki2 (Fallback)")
+        best_db = db_path_21 if os.path.exists(db_path_21) else (db_path_20 if os.path.exists(db_path_20) else None)
             
         if not best_db:
-            print("Error: No Anki database found in .apkg")
+            print("Error: No Anki database found")
             return []
 
         # Connect to SQLite
         conn = sqlite3.connect(best_db)
         cursor = conn.cursor()
         
-        # Query the notes table but ONLY for notes that have associated cards
-        # This matches apkg.py logic: "Join bảng cards để biết Note thuộc Deck nào"
-        # Since we are importing the whole file as one Deck, we just want to ensure
-        # we only get Notes that are actually used in Cards.
         try:
-            # Get valid Note IDs from cards table
             cursor.execute("SELECT DISTINCT nid FROM cards")
             valid_nids = {row[0] for row in cursor.fetchall()}
             
-            # Get all notes
             cursor.execute("SELECT id, flds FROM notes")
             rows = cursor.fetchall()
             
-            print(f"Found {len(rows)} raw notes. Valid notes with cards: {len(valid_nids)}")
+            print(f"Found {len(rows)} raw notes. Valid notes: {len(valid_nids)}")
         except sqlite3.OperationalError as e:
             print(f"SQLite Error: {e}")
             conn.close()
             return []
         
+        def replace_media_src(content):
+            """Replace src="filename" with src="url" """
+            for filename, url in url_mapping.items():
+                # Simple string replacement (can be optimized with regex for exact matches inside src="")
+                # Anki usually puts filename directly or urlencoded. 
+                # This is a basic replacement that works for most cases.
+                if filename in content:
+                    content = content.replace(f'src="{filename}"', f'src="{url}"')
+                    content = content.replace(f"src='{filename}'", f"src='{url}'")
+                    # Handle unquoted (rare but possible in old HTMl)
+                    # content = content.replace(filename, url) # Too risky
+            return content
+
         for note_id, fields_str in rows:
-            # Filter: Only process notes that correspond to actual cards
             if note_id not in valid_nids:
                 continue
 
-            # 0x1f is the standard separator for Anki fields
             fields = fields_str.split('\x1f')
-            
             if not fields:
                 continue
                 
             front = fields[0].strip()
-            
-            # Combine all remaining fields for the Back (Answer)
             if len(fields) > 1:
-                # Use <hr> or <br> to separate fields visually
                 back = "<br><hr><br>".join([f.strip() for f in fields[1:] if f.strip()])
             else:
                 back = "<i>(No content on back)</i>"
             
-            # Skip completely empty cards
+            # Replace media URLs
+            front = replace_media_src(front)
+            back = replace_media_src(back)
+
             if not front and len(fields) == 1:
                 continue
                 
@@ -112,7 +156,7 @@ def parse_anki_file(apkg_path: str) -> list[dict]:
             })
         
         conn.close()
-        print(f"Successfully parsed {len(cards)} valid notes (cards).")
+        print(f"Parsed {len(cards)} cards.")
         
     except Exception as e:
         print(f"Parse error: {e}")
