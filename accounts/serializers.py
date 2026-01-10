@@ -26,6 +26,14 @@ class SignUpSerializer(serializers.ModelSerializer):
         )
         user.set_password(validated_data["password"])
         user.save()
+        
+        # Create Anki Sync User
+        try:
+             from lms.anki_sync import add_user
+             add_user(user.email, validated_data["password"])
+        except Exception as e:
+            print(f"Failed to create Anki user for {user.email}: {e}")
+            
         return user
 
 
@@ -52,3 +60,15 @@ class ProfileSerializer(serializers.ModelSerializer):
         if "email" in validated_data:
             instance.username = validated_data["email"]
         return super().update(instance, validated_data)
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    """Serializer để thay đổi mật khẩu."""
+    old_password = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True)
+    confirm_password = serializers.CharField(required=True)
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError("Mật khẩu mới không khớp.")
+        return attrs

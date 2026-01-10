@@ -1,0 +1,40 @@
+# Anki Sync Server - Docker Compose
+# Vị trí khuyến nghị: /opt/anki-sync/docker-compose.yml
+
+version: '3.8'
+
+services:
+  anki-sync:
+    image: kuklinistvan/anki-sync-server:latest
+    container_name: anki-sync
+    restart: unless-stopped
+    ports:
+      - "27701:27701"
+    environment:
+      # ╔════════════════════════════════════════════════════════════╗
+      # ║                    DANH SÁCH USER                          ║
+      # ║  Format: SYNC_USER<số>: "username:password"                ║
+      # ║  Thêm user mới bằng cách thêm dòng SYNC_USER2, SYNC_USER3  ║
+      # ╚════════════════════════════════════════════════════════════╝
+      SYNC_USER1: "admin:YourSecurePassword123"
+      # SYNC_USER2: "student1:password123"
+      # SYNC_USER3: "student2:password456"
+      
+      # ╔════════════════════════════════════════════════════════════╗
+      # ║                  CẤU HÌNH SERVER                           ║
+      # ╚════════════════════════════════════════════════════════════╝
+      SYNC_BASE: "/data"
+      MAX_SYNC_PAYLOAD_MEGS: "100"
+      
+    volumes:
+      # Persistent storage - dữ liệu user được lưu tại đây
+      - anki_data:/data
+      
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  anki_data:

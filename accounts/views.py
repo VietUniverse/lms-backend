@@ -65,3 +65,34 @@ def me_view(request):
         serializer.save()
         return Response(UserSerializer(user).data)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def change_password_view(request):
+    from .serializers import ChangePasswordSerializer
+    from lms.anki_sync import change_password
+    
+    serializer = ChangePasswordSerializer(data=request.data)
+    if serializer.is_valid():
+        user = request.user
+        if not user.check_password(serializer.data.get("old_password")):
+            return Response({"old_password": ["Mật khẩu cũ không đúng."]}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Change password in LMS
+        user.set_password(serializer.data.get("new_password"))
+        user.save()
+        
+        # Sync to Anki Server
+        try:
+            success, msg = change_password(user.email, serializer.data.get("new_password"))
+            if not success:
+               # If failed (e.g. user not found in Anki), try adding them
+               from lms.anki_sync import add_user
+               add_user(user.email, serializer.data.get("new_password"))
+        except Exception as e:
+            print(f"Anki Sync Error: {e}")
+
+        return Response({"message": "Đổi mật khẩu thành công!"}, status=status.HTTP_200_OK)
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
