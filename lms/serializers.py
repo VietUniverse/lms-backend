@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Classroom, Deck, Test, Progress
+from .models import Classroom, Deck, Test, Progress, SupportTicket
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -97,3 +97,14 @@ class ProgressSerializer(serializers.ModelSerializer):
         model = Progress
         fields = ["id", "deck", "cards_learned", "cards_to_review", "last_sync"]
         read_only_fields = ["id", "last_sync"]
+
+
+class SupportTicketSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SupportTicket
+        fields = ["id", "subject", "message", "status", "priority", "attachment", "created_at", "updated_at"]
+        read_only_fields = ["id", "status", "created_at", "updated_at"]
+
+    def create(self, validated_data):
+        # User is handled in ViewSet perform_create
+        return super().create(validated_data)

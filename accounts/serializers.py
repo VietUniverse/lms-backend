@@ -32,4 +32,23 @@ class SignUpSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "full_name", "email", "role"]
+        fields = ["id", "full_name", "email", "role", "date_joined"]
+
+
+class ProfileSerializer(serializers.ModelSerializer):
+    """Serializer để cập nhật thông tin cá nhân (trừ role)."""
+    class Meta:
+        model = User
+        fields = ["full_name", "email"]
+
+    def validate_email(self, value):
+        user = self.context['request'].user
+        if User.objects.exclude(pk=user.pk).filter(email=value).exists():
+            raise serializers.ValidationError("Email này đã được sử dụng.")
+        return value
+
+    def update(self, instance, validated_data):
+        # Update username to match new email if email changes
+        if "email" in validated_data:
+            instance.username = validated_data["email"]
+        return super().update(instance, validated_data)

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Classroom, Deck, Test, Progress
+from .models import Classroom, Deck, Test, Progress, SupportTicket
 
 
 @admin.register(Classroom)
@@ -24,3 +24,11 @@ class TestAdmin(admin.ModelAdmin):
 @admin.register(Progress)
 class ProgressAdmin(admin.ModelAdmin):
     list_display = ("student", "deck", "cards_learned", "cards_to_review", "last_sync")
+
+
+@admin.register(SupportTicket)
+class SupportTicketAdmin(admin.ModelAdmin):
+    list_display = ("subject", "user", "status", "priority", "created_at")
+    list_filter = ("status", "priority")
+    search_fields = ("subject", "user__email", "message")
+    readonly_fields = ("created_at", "updated_at")

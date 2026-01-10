@@ -51,7 +51,17 @@ def login_view(request):
     )
 
 
-@api_view(["GET"])
+@api_view(["GET", "PATCH"])
 @permission_classes([IsAuthenticated])
 def me_view(request):
-    return Response(UserSerializer(request.user).data)
+    user = request.user
+    if request.method == "GET":
+        return Response(UserSerializer(user).data)
+    
+    # PATCH: Update profile
+    from .serializers import ProfileSerializer
+    serializer = ProfileSerializer(user, data=request.data, partial=True, context={'request': request})
+    if serializer.is_valid():
+        serializer.save()
+        return Response(UserSerializer(user).data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

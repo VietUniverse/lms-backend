@@ -17,7 +17,9 @@ from .serializers import (
     ClassroomDetailSerializer,
     DeckSerializer,
     TestSerializer,
+    TestSerializer,
     ProgressSerializer,
+    SupportTicketSerializer,
 )
 
 User = get_user_model()
@@ -487,3 +489,17 @@ class ProgressViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(student=self.request.user)
+
+
+class SupportTicketViewSet(viewsets.ModelViewSet):
+    """API endpoint cho Support Ticket."""
+    serializer_class = SupportTicketSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        # Security: Only see own tickets
+        return self.request.user.tickets.all().order_by("-created_at")
+
+    def perform_create(self, serializer):
+        # Security: Auto-assign user
+        serializer.save(user=self.request.user)

@@ -181,3 +181,32 @@ class Progress(models.Model):
 
     def __str__(self) -> str:
         return f"{self.student} - {self.deck}"
+
+
+class SupportTicket(models.Model):
+    """Ticket hỗ trợ của user gửi cho admin."""
+    STATUS_CHOICES = [
+        ("OPEN", "Mở"),
+        ("IN_PROGRESS", "Đang xử lý"),
+        ("CLOSED", "Đã đóng"),
+    ]
+    PRIORITY_CHOICES = [
+        ("LOW", "Thấp"),
+        ("MEDIUM", "Trung bình"),
+        ("HIGH", "Cao"),
+    ]
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.CASCADE, 
+        related_name="tickets"
+    )
+    subject = models.CharField(max_length=255)
+    message = models.TextField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="OPEN")
+    priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default="MEDIUM")
+    attachment = models.FileField(upload_to='tickets/', blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"[{self.status}] {self.subject} ({self.user.email})"
