@@ -26,20 +26,19 @@ def download_from_appwrite(file_id: str, dest_path: str) -> None:
 
 def parse_anki_file(apkg_path: str) -> list[dict]:
     """
-    Parse an Anki .apkg file, extract cards, and upload media to Appwrite.
+    Parse an Anki .apkg file, extract cards, and save media to local storage (VPS).
     """
     import json
-    import re
-
+    
     cards = []
     temp_dir = tempfile.mkdtemp()
     
-    # Appwrite Config
-    appwrite_url = f"{settings.APPWRITE_ENDPOINT}/storage/buckets/{settings.APPWRITE_BUCKET_ID}/files"
-    headers = {
-        "X-Appwrite-Project": settings.APPWRITE_PROJECT_ID,
-        "X-Appwrite-Key": settings.APPWRITE_API_KEY,
-    }
+    # Destination for media files
+    media_dir = os.path.join(settings.MEDIA_ROOT, 'anki_media')
+    if not os.path.exists(media_dir):
+        os.makedirs(media_dir)
+        
+    media_url_base = f"{settings.MEDIA_URL}anki_media/"
 
     try:
         # Extract the .apkg
@@ -58,34 +57,24 @@ def parse_anki_file(apkg_path: str) -> list[dict]:
                 
                 print(f"Found {len(media_map)} media files.")
 
-                # Upload each media file
+                # Process each media file
                 for zip_name, filename in media_map.items():
-                    # Skip if not an image (audio/video support can be added later)
+                    # Skip if not an image (audio/video support can be added later if needed)
                     if not any(filename.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp']):
                          continue
 
-                    file_path = os.path.join(temp_dir, zip_name)
-                    if os.path.exists(file_path):
-                        # Upload to Appwrite
+                    src_path = os.path.join(temp_dir, zip_name)
+                    dest_path = os.path.join(media_dir, filename)
+                    
+                    if os.path.exists(src_path):
+                        # Copy file to media directory
+                        # Use copy2 to preserve metadata, or just copy
                         try:
-                            with open(file_path, 'rb') as img_file:
-                                files = {'fileId': 'unique()', 'file': (filename, img_file)}
-                                # Use separate headers for upload because 'Content-Type' is set by requests
-                                upload_headers = {
-                                    "X-Appwrite-Project": settings.APPWRITE_PROJECT_ID,
-                                    "X-Appwrite-Key": settings.APPWRITE_API_KEY,
-                                }
-                                res = requests.post(appwrite_url, headers=upload_headers, files=files)
-                                
-                                if res.status_code in [200, 201]:
-                                    file_id = res.json()['$id']
-                                    # Construct View URL
-                                    view_url = f"{settings.APPWRITE_ENDPOINT}/storage/buckets/{settings.APPWRITE_BUCKET_ID}/files/{file_id}/view?project={settings.APPWRITE_PROJECT_ID}"
-                                    url_mapping[filename] = view_url
-                                else:
-                                    print(f"Failed to upload {filename}: {res.text}")
+                            shutil.copy2(src_path, dest_path)
+                            # Generate URL
+                            url_mapping[filename] = f"{media_url_base}{filename}"
                         except Exception as e:
-                            print(f"Error uploading {filename}: {e}")
+                            print(f"Error copying {filename}: {e}")
             except Exception as e:
                 print(f"Error processing media file: {e}")
 
@@ -116,16 +105,11 @@ def parse_anki_file(apkg_path: str) -> list[dict]:
             return []
         
         def replace_media_src(content):
-            """Replace src="filename" with src="url" """
+            """Replace src="filename" with src="/media/anki_media/filename" """
             for filename, url in url_mapping.items():
-                # Simple string replacement (can be optimized with regex for exact matches inside src="")
-                # Anki usually puts filename directly or urlencoded. 
-                # This is a basic replacement that works for most cases.
                 if filename in content:
                     content = content.replace(f'src="{filename}"', f'src="{url}"')
                     content = content.replace(f"src='{filename}'", f"src='{url}'")
-                    # Handle unquoted (rare but possible in old HTMl)
-                    # content = content.replace(filename, url) # Too risky
             return content
 
         for note_id, fields_str in rows:
