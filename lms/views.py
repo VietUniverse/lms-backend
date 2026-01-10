@@ -302,8 +302,8 @@ class DeckViewSet(viewsets.ModelViewSet):
         enrolled_classes = user.enrolled_classes.all()
         # Lấy Decks được gán trực tiếp vào Class HOẶC qua Test (backward compat)
         return Deck.objects.filter(
-            models.Q(classrooms__in=enrolled_classes) |
-            models.Q(tests__classroom__in=enrolled_classes)
+            Q(classrooms__in=enrolled_classes) |
+            Q(tests__classroom__in=enrolled_classes)
         ).distinct()
 
     def perform_create(self, serializer):
