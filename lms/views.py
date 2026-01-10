@@ -1,5 +1,6 @@
 from django.http import JsonResponse
 from rest_framework import viewsets, permissions, status
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
 from django.conf import settings
@@ -309,35 +310,39 @@ class DeckViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(teacher=self.request.user)
 
-    @action(detail=False, methods=["post"], url_path="create_from_id")
-    def create_from_id(self, request):
-        """
-        Tạo Deck record từ Appwrite File ID (đã upload từ frontend).
-        Parse file .apkg để lấy thẻ và trả về preview.
-        """
-        file_id = request.data.get("file_id")
+    @action(detail=False, methods=["post"], url_path="upload", parser_classes=[MultiPartParser, FormParser])
+    def upload(self, request):
+        """Upload .apkg file directly and parse cards (Bypassing Appwrite)."""
+        file_obj = request.FILES.get("file")
         title = request.data.get("title")
 
-        if not file_id or not title:
-            return Response({"error": "Missing file_id or title"}, status=status.HTTP_400_BAD_REQUEST)
+        if not file_obj or not title:
+            return Response(
+                {"error": "File and title are required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        # Create Deck record with DRAFT status
+        # Create Deck
         deck = Deck.objects.create(
             teacher=request.user,
             title=title,
-            appwrite_file_id=file_id,
-            appwrite_file_url=self._get_file_url(file_id),
             card_count=0,
             status="DRAFT",
+            appwrite_file_id="local_upload", # Placeholder
         )
 
-        # Download and parse the Anki file
-        temp_file = None
         try:
-            temp_file = tempfile.NamedTemporaryFile(suffix=".apkg", delete=False)
-            temp_file.close()
-            download_from_appwrite(file_id, temp_file.name)
-            parsed_cards = parse_anki_file(temp_file.name)
+            # Save uploaded file to temp
+            with tempfile.NamedTemporaryFile(suffix=".apkg", delete=False) as temp_file:
+                for chunk in file_obj.chunks():
+                    temp_file.write(chunk)
+                temp_path = temp_file.name
+
+            # Parse
+            parsed_cards = parse_anki_file(temp_path)
+
+            # Cleanup temp file
+            os.unlink(temp_path)
 
             # Bulk create Card objects
             card_objects = [
@@ -367,13 +372,13 @@ class DeckViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
-            # Cleanup deck if parsing failed
             deck.delete()
-            return Response({"error": f"Failed to parse Anki file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        finally:
-            # Cleanup temp file
-            if temp_file and os.path.exists(temp_file.name):
-                os.unlink(temp_file.name)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=["post"], url_path="create_from_id")
+    def create_from_id(self, request):
+        # Legacy method - kept for reference or backup
+        pass
 
     @action(detail=True, methods=["post"], url_path="activate")
     def activate_deck(self, request, pk=None):
