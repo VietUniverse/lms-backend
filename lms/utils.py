@@ -38,7 +38,11 @@ def parse_anki_file(apkg_path: str) -> list[dict]:
     if not os.path.exists(media_dir):
         os.makedirs(media_dir)
         
-    media_url_base = f"{settings.MEDIA_URL}anki_media/"
+    # Use ABSOLUTE URL for production
+    # Hardcode for now or get from settings.ALLOWED_HOSTS[0]
+    # Better to use a setting variable, but for quick fix:
+    domain = "https://api.ankivn.com" 
+    media_url_base = f"{domain}{settings.MEDIA_URL}anki_media/"
 
     try:
         # Extract the .apkg
