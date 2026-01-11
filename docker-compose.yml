@@ -12,20 +12,17 @@ services:
 
   # 2. Backend (Django + DRF)
   backend:
-    build: ./backend
+    build: .
     container_name: ankilms_backend
-    tty: true
-    stdin_open: true
     user: root  # Cần để truy cập docker.sock
     volumes:
-      - ./backend:/code
+      - .:/app
       - ./sync_data:/sync_data
       # Mount docker socket để giao tiếp với Anki container
       - /var/run/docker.sock:/var/run/docker.sock
     command: python manage.py runserver 0.0.0.0:8000
     depends_on:
       - db
-      - sync_server
 
   # 3. Frontend (Next.js)
   frontend:
@@ -37,19 +34,5 @@ services:
     ports:
       - "3000:3000"
 
-  # 4. Anki Sync Server (Rust Version - Tương thích Anki 2.1.57+)
-  sync_server:
-    image: ankicommunity/anki-sync-server-rs:latest
-    container_name: anki-sync
-    restart: unless-stopped
-    volumes:
-      - anki_data:/app/data
-    environment:
-      - ANKI_LISTEN=0.0.0.0:27701
-      - ANKI_BASE_URL=/
-    ports:
-      - "27701:27701"
-
 volumes:
   postgres_data:
-  anki_data:
