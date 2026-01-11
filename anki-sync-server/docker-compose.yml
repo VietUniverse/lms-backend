@@ -16,6 +16,9 @@ services:
     environment:
       ANKI_LISTEN: "0.0.0.0:27701"
       ANKI_BASE_URL: "/"
+      # Tạo user admin mặc định để server không bị crash
+      ANKISYNCD_USERNAME: "admin"
+      ANKISYNCD_PASSWORD: "admin123"
     logging:
       driver: "json-file"
       options:

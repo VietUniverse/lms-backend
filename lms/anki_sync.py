@@ -11,8 +11,8 @@ def run_ankisyncd_command(args):
     """
     Run command inside Anki container via Docker Socket.
     """
-    # Lệnh đầy đủ: docker exec -i anki-sync ./ankisyncd <args>
-    cmd = ['docker', 'exec', '-i', ANKI_CONTAINER_NAME, './ankisyncd'] + args
+    # Lệnh đầy đủ: docker exec -i anki-sync ankisyncd <args>
+    cmd = ['docker', 'exec', '-i', ANKI_CONTAINER_NAME, 'ankisyncd'] + args
     
     try:
         # timeout=5s là đủ, tránh treo server Django
