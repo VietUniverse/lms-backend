@@ -41,6 +41,7 @@ def signup_view(request):
             },
             status=status.HTTP_201_CREATED,
         )
+    print(f"Signup Errors: {serializer.errors}")
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
