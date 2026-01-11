@@ -13,11 +13,16 @@ def run_ankisyncd_command(args):
     """
     # Lệnh đầy đủ: docker exec -i anki-sync ankisyncd <args>
     cmd = ['docker', 'exec', '-i', ANKI_CONTAINER_NAME, 'ankisyncd'] + args
+    print(f"DEBUG: Running command: {cmd}")
     
     try:
         # timeout=5s là đủ, tránh treo server Django
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
         
+        print(f"DEBUG: Return Code: {result.returncode}")
+        print(f"DEBUG: Stdout: {result.stdout}")
+        print(f"DEBUG: Stderr: {result.stderr}")
+
         if result.returncode != 0:
             logger.error(f"Anki Sync Error: {result.stderr}")
             return False, result.stderr.strip()
