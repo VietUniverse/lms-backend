@@ -14,14 +14,18 @@ services:
   backend:
     build: ./backend
     container_name: ankilms_backend
-    tty: true        # Thêm dòng này
-    stdin_open: true # Thêm dòng này
+    tty: true
+    stdin_open: true
+    user: root  # Cần để truy cập docker.sock
     volumes:
       - ./backend:/code
       - ./sync_data:/sync_data
+      # Mount docker socket để giao tiếp với Anki container
+      - /var/run/docker.sock:/var/run/docker.sock
     command: python manage.py runserver 0.0.0.0:8000
     depends_on:
       - db
+      - sync_server
 
   # 3. Frontend (Next.js)
   frontend:
@@ -33,18 +37,19 @@ services:
     ports:
       - "3000:3000"
 
-  # 4. Anki Sync Server
+  # 4. Anki Sync Server (Rust Version - Tương thích Anki 2.1.57+)
   sync_server:
-    image: python:3.9-slim
-    container_name: ankilms_sync
+    image: ankicommunity/anki-sync-server-rs:latest
+    container_name: anki-sync
+    restart: unless-stopped
     volumes:
-      - ./sync_data/collections:/data
+      - anki_data:/app/data
     environment:
-      - SYNC_BASE=/data
-      - SYNC_USER1=admin:password123  # Thêm dòng này để tạo user mặc định
-    command: >
-      sh -c "pip install anki && python3 -m anki.syncserver"
+      - ANKI_LISTEN=0.0.0.0:27701
+      - ANKI_BASE_URL=/
     ports:
       - "27701:27701"
+
 volumes:
   postgres_data:
+  anki_data:

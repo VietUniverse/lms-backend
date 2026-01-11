@@ -1,63 +1,49 @@
 # lms/anki_sync.py
 import subprocess
+import logging
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 ANKI_CONTAINER_NAME = getattr(settings, 'ANKI_SYNC_CONTAINER', 'anki-sync')
 
-def run_command(cmd_list, input_text=None):
+def run_ankisyncd_command(args):
     """
-    Run command inside docker container.
+    Run command inside Anki container via Docker Socket.
     """
-    full_cmd = ['docker', 'exec', '-i', ANKI_CONTAINER_NAME] + cmd_list
+    # Lệnh đầy đủ: docker exec -i anki-sync ./ankisyncd <args>
+    cmd = ['docker', 'exec', '-i', ANKI_CONTAINER_NAME, './ankisyncd'] + args
     
     try:
-        result = subprocess.run(
-            full_cmd,
-            input=input_text,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        return result.returncode == 0, result.stdout.strip() + result.stderr.strip()
+        # timeout=5s là đủ, tránh treo server Django
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        
+        if result.returncode != 0:
+            logger.error(f"Anki Sync Error: {result.stderr}")
+            return False, result.stderr.strip()
+            
+        return True, result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        logger.error("Anki Sync Command Timed Out")
+        return False, "Timeout"
+    except FileNotFoundError:
+        logger.error("Docker command not found. Is Docker CLI installed in backend container?")
+        return False, "Docker CLI missing"
     except Exception as e:
+        logger.error(f"Anki Sync Exception: {str(e)}")
         return False, str(e)
 
 def add_user(username, password):
-    """
-    Add user using ankisyncd-cli.
-    Command: python3 -m ankisyncd_cli adduser <username>
-    Input: password
-    """
-    # Try different command variations if one fails (path varies by image version)
-    cmds = [
-        ['python3', '-m', 'ankisyncd_cli', 'adduser', username], # Common
-        ['./ankisyncctl.py', 'adduser', username],               # Older
-    ]
-    
-    for cmd in cmds:
-        success, output = run_command(cmd, input_text=f"{password}\n")
-        if success: 
-            return True, output
-        if "already exists" in output:
-            return True, "User exists"
-            
-    return False, "Failed to add user"
+    """Add new user to Anki Sync Server."""
+    return run_ankisyncd_command(['user', '--add', username, password])
 
 def change_password(username, password):
-    """
-    Change password.
-    Command: python3 -m ankisyncd_cli passwd <username>
-    """
-    cmds = [
-        ['python3', '-m', 'ankisyncd_cli', 'passwd', username],
-        ['./ankisyncctl.py', 'passwd', username],
-    ]
-    
-    for cmd in cmds:
-        success, output = run_command(cmd, input_text=f"{password}\n")
-        if success: return True, output
-            
-    return False, "Failed to change password"
+    """Change user password."""
+    return run_ankisyncd_command(['user', '--pass', username, password])
+
+def delete_user(username):
+    """Delete user from Anki Sync Server."""
+    return run_ankisyncd_command(['user', '--del', username])
 
 def sync_user_from_lms(user, raw_password):
     """

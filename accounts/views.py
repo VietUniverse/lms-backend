@@ -22,6 +22,17 @@ def signup_view(request):
     serializer = SignUpSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
+        
+        # Sync to Anki Server
+        # Lấy raw password từ request data vì user server đã hash mất rồi
+        raw_password = request.data.get("password")
+        if raw_password:
+            from lms.anki_sync import add_user
+            try:
+                add_user(user.email, raw_password)
+            except Exception as e:
+                print(f"Anki Add User Error: {e}")
+
         tokens = get_tokens_for_user(user)
         return Response(
             {
