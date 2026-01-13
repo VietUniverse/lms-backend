@@ -154,9 +154,20 @@ class ClassroomViewSet(viewsets.ModelViewSet):
             try:
                 from .utils import download_from_appwrite
                 from .services.deck_injector import inject_deck_to_student
+                import tempfile
                 
-                # Download deck file content
-                deck_content = download_from_appwrite(deck.appwrite_file_id)
+                # Download deck file to temp location
+                with tempfile.NamedTemporaryFile(suffix='.apkg', delete=False) as tmp:
+                    tmp_path = tmp.name
+                
+                download_from_appwrite(deck.appwrite_file_id, tmp_path)
+                
+                # Read deck content
+                with open(tmp_path, 'rb') as f:
+                    deck_content = f.read()
+                
+                # Clean up temp file
+                os.unlink(tmp_path)
                 
                 # Inject to each student in class
                 for student in classroom.students.all():
@@ -879,8 +890,21 @@ def sync_pending_decks(request):
                 continue
             
             try:
-                # Download and inject deck
-                deck_content = download_from_appwrite(deck.appwrite_file_id)
+                import tempfile
+                
+                # Download deck to temp file
+                with tempfile.NamedTemporaryFile(suffix='.apkg', delete=False) as tmp:
+                    tmp_path = tmp.name
+                
+                download_from_appwrite(deck.appwrite_file_id, tmp_path)
+                
+                with open(tmp_path, 'rb') as f:
+                    deck_content = f.read()
+                
+                import os
+                os.unlink(tmp_path)
+                
+                # Inject deck
                 success, message = inject_deck_to_student(user.email, deck_content)
                 
                 if success:
