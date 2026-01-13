@@ -503,3 +503,304 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         # Security: Auto-assign user
         serializer.save(user=self.request.user)
+
+
+# ============================================
+# ANKI ADDON INTEGRATION ENDPOINTS
+# ============================================
+
+from django.http import FileResponse
+from django.utils import timezone
+from datetime import datetime
+from .models import StudySession, CardReview
+from .serializers import AnkiDeckSerializer, AnkiProgressSerializer
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def anki_my_decks(request):
+    """
+    GET /api/anki/my-decks/
+    Trả về danh sách deck được giao cho học sinh này.
+    Addon sẽ so sánh version để quyết định có cần download lại không.
+    """
+    user = request.user
+    
+    # Lấy tất cả decks từ các lớp học sinh đang tham gia
+    enrolled_classes = user.enrolled_classes.all()
+    decks = Deck.objects.filter(
+        Q(classrooms__in=enrolled_classes) | 
+        Q(tests__classroom__in=enrolled_classes),
+        status="ACTIVE"
+    ).distinct()
+    
+    serializer = AnkiDeckSerializer(decks, many=True)
+    return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def anki_deck_download(request, deck_id):
+    """
+    GET /api/anki/deck/{id}/download/
+    Download file .apkg của deck.
+    Sử dụng FileResponse để stream file, tránh load cả file vào RAM.
+    """
+    try:
+        deck = Deck.objects.get(pk=deck_id, status="ACTIVE")
+    except Deck.DoesNotExist:
+        return Response({"error": "Deck không tồn tại"}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Kiểm tra quyền: học sinh phải enrolled trong lớp có deck này
+    user = request.user
+    user_classes = user.enrolled_classes.all() if user.role == "student" else []
+    deck_classes = deck.classrooms.all()
+    
+    # Teacher có thể download deck của mình
+    if user.role == "teacher" and deck.teacher == user:
+        pass  # OK
+    elif user.role == "student" and deck_classes.filter(pk__in=[c.pk for c in user_classes]).exists():
+        pass  # OK
+    else:
+        return Response({"error": "Không có quyền truy cập deck này"}, status=status.HTTP_403_FORBIDDEN)
+    
+    # Download từ Appwrite và stream về client
+    if not deck.appwrite_file_id or deck.appwrite_file_id == "local_upload":
+        return Response({"error": "Deck chưa có file"}, status=status.HTTP_404_NOT_FOUND)
+    
+    try:
+        # Download từ Appwrite
+        file_content = download_from_appwrite(deck.appwrite_file_id)
+        
+        # Stream response
+        from django.http import HttpResponse
+        response = HttpResponse(file_content, content_type='application/octet-stream')
+        response['Content-Disposition'] = f'attachment; filename="{deck.title}.apkg"'
+        # Add lms_deck_id header for addon to read
+        response['X-LMS-Deck-ID'] = str(deck.id)
+        response['X-LMS-Deck-Version'] = str(deck.version)
+        return response
+        
+    except Exception as e:
+        return Response({"error": f"Lỗi download: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def anki_progress(request):
+    """
+    POST /api/anki/progress/
+    Nhận tiến độ học tập từ Addon (Batch Processing).
+    Addon gửi lên mảng reviews thay vì từng cái một để tránh DDOS.
+    """
+    serializer = AnkiProgressSerializer(data=request.data)
+    
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    data = serializer.validated_data
+    deck_id = data['lms_deck_id']
+    reviews_data = data['reviews']
+    
+    if not reviews_data:
+        return Response({"status": "empty", "synced_count": 0})
+    
+    try:
+        deck = Deck.objects.get(pk=deck_id)
+    except Deck.DoesNotExist:
+        return Response({"error": "Deck không tồn tại"}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Tính toán thời gian và duration từ reviews
+    timestamps = [r['timestamp'] for r in reviews_data]
+    start_time = datetime.fromtimestamp(min(timestamps), tz=timezone.utc)
+    total_time_ms = sum(r['time'] for r in reviews_data)
+    
+    # 1. Tạo StudySession
+    session = StudySession.objects.create(
+        student=request.user,
+        deck=deck,
+        start_time=start_time,
+        duration_seconds=total_time_ms // 1000,
+        cards_reviewed=len(reviews_data)
+    )
+    
+    # 2. Bulk Create CardReviews (Siêu nhanh, không DDOS DB)
+    review_objects = [
+        CardReview(
+            session=session,
+            card_id=r['card_id'],
+            ease=r['ease'],
+            time_taken=r['time'],
+            reviewed_at=datetime.fromtimestamp(r['timestamp'], tz=timezone.utc)
+        ) for r in reviews_data
+    ]
+    CardReview.objects.bulk_create(review_objects)
+    
+    # 3. Update Progress tổng hợp
+    progress, _ = Progress.objects.get_or_create(student=request.user, deck=deck)
+    progress.cards_learned = CardReview.objects.filter(
+        session__student=request.user,
+        session__deck=deck,
+        ease__gte=3  # Good or Easy
+    ).values('card_id').distinct().count()
+    progress.save()
+    
+    return Response({
+        "status": "synced",
+        "synced_count": len(review_objects),
+        "session_id": session.id
+    })
+
+
+# ============================================
+# ANKI SYNC SERVER ANALYTICS ENDPOINTS
+# ============================================
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def my_anki_stats(request):
+    """
+    GET /api/anki/stats/
+    Get current user's Anki learning statistics from sync server.
+    
+    Triggers a sync from user's Anki collection to Django DB,
+    then returns aggregated metrics.
+    """
+    from .services.anki_analytics import AnkiAnalyticsService
+    
+    service = AnkiAnalyticsService(request.user)
+    
+    # Trigger sync first (reads from collection.anki2)
+    try:
+        new_entries = service.sync_revlog()
+    except Exception as e:
+        new_entries = 0
+        # Log but don't fail - user may not have synced yet
+        import logging
+        logging.warning(f"Failed to sync revlog for {request.user.email}: {e}")
+    
+    # Get metrics
+    metrics = service.get_metrics()
+    metrics['new_entries_synced'] = new_entries
+    
+    return Response(metrics)
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def class_anki_stats(request, class_id):
+    """
+    GET /api/anki/class/{class_id}/stats/
+    Get Anki stats for all students in a class (teacher only).
+    
+    Returns aggregated metrics for each student in the class.
+    """
+    from .services.anki_analytics import AnkiAnalyticsService
+    
+    # Verify teacher owns this class
+    try:
+        classroom = Classroom.objects.get(id=class_id, teacher=request.user)
+    except Classroom.DoesNotExist:
+        return Response(
+            {"error": "Classroom not found or you don't have permission"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    students_stats = []
+    for student in classroom.students.all():
+        service = AnkiAnalyticsService(student)
+        
+        # Sync each student's revlog
+        try:
+            service.sync_revlog()
+        except Exception:
+            pass  # Continue even if sync fails
+        
+        metrics = service.get_metrics()
+        students_stats.append({
+            "student_id": student.id,
+            "student_name": student.full_name or student.email,
+            "email": student.email,
+            "metrics": metrics
+        })
+    
+    # Sort by cards reviewed (most active first)
+    students_stats.sort(
+        key=lambda x: x['metrics']['month']['cards_reviewed'],
+        reverse=True
+    )
+    
+    return Response({
+        "classroom": {
+            "id": classroom.id,
+            "name": classroom.name,
+        },
+        "student_count": len(students_stats),
+        "students": students_stats
+    })
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def anki_calendar(request):
+    """
+    GET /api/anki/calendar/?days=30
+    Get study activity for calendar heatmap display.
+    
+    Query params:
+        days: Number of days to look back (default: 30, max: 365)
+    """
+    from .services.anki_analytics import AnkiAnalyticsService
+    
+    days = min(int(request.query_params.get("days", 30)), 365)
+    
+    service = AnkiAnalyticsService(request.user)
+    
+    # Sync first
+    try:
+        service.sync_revlog()
+    except Exception:
+        pass
+    
+    calendar_data = service.get_study_calendar(days=days)
+    
+    return Response({
+        "days": days,
+        "activity": calendar_data
+    })
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def anki_sync_status(request):
+    """
+    GET /api/anki/sync-status/
+    Check if user has synced with Anki sync server.
+    
+    Returns sync server info and user's sync status.
+    """
+    from .anki_sync import get_user_collection_path, user_has_synced
+    
+    collection_path = get_user_collection_path(request.user.email)
+    has_synced = user_has_synced(request.user.email)
+    
+    # Get last sync time from collection file
+    last_sync = None
+    if has_synced:
+        import os
+        try:
+            mtime = os.path.getmtime(str(collection_path))
+            last_sync = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+        except Exception:
+            pass
+    
+    return Response({
+        "email": request.user.email,
+        "has_synced": has_synced,
+        "last_sync": last_sync,
+        "sync_server_url": "http://localhost:8080",  # TODO: Make configurable
+        "instructions": {
+            "desktop": "Anki → Tools → Preferences → Syncing → Self-hosted sync server",
+            "android": "AnkiDroid → Settings → Advanced → Custom sync server",
+        } if not has_synced else None
+    })

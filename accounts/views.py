@@ -19,19 +19,24 @@ def get_tokens_for_user(user):
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def signup_view(request):
+    import logging
+    logger = logging.getLogger(__name__)
+    
     serializer = SignUpSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
         
-        # Sync to Anki Server
-        # Lấy raw password từ request data vì user server đã hash mất rồi
+        # Create Anki sync server user
+        # Get raw password from request since user.password is already hashed
         raw_password = request.data.get("password")
         if raw_password:
-            from lms.anki_sync import add_user
+            from lms.anki_sync import create_anki_user
             try:
-                add_user(user.email, raw_password)
+                success = create_anki_user(user.email, raw_password)
+                if not success:
+                    logger.warning(f"Failed to create Anki user for {user.email}")
             except Exception as e:
-                print(f"Anki Add User Error: {e}")
+                logger.error(f"Anki user creation error for {user.email}: {e}")
 
         tokens = get_tokens_for_user(user)
         return Response(
@@ -41,7 +46,7 @@ def signup_view(request):
             },
             status=status.HTTP_201_CREATED,
         )
-    print(f"Signup Errors: {serializer.errors}")
+    logger.debug(f"Signup validation errors: {serializer.errors}")
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -82,8 +87,11 @@ def me_view(request):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def change_password_view(request):
+    import logging
+    logger = logging.getLogger(__name__)
+    
     from .serializers import ChangePasswordSerializer
-    from lms.anki_sync import change_password
+    from lms.anki_sync import change_anki_password
     
     serializer = ChangePasswordSerializer(data=request.data)
     if serializer.is_valid():
@@ -91,19 +99,19 @@ def change_password_view(request):
         if not user.check_password(serializer.data.get("old_password")):
             return Response({"old_password": ["Mật khẩu cũ không đúng."]}, status=status.HTTP_400_BAD_REQUEST)
         
+        new_password = serializer.data.get("new_password")
+        
         # Change password in LMS
-        user.set_password(serializer.data.get("new_password"))
+        user.set_password(new_password)
         user.save()
         
         # Sync to Anki Server
         try:
-            success, msg = change_password(user.email, serializer.data.get("new_password"))
+            success = change_anki_password(user.email, new_password)
             if not success:
-               # If failed (e.g. user not found in Anki), try adding them
-               from lms.anki_sync import add_user
-               add_user(user.email, serializer.data.get("new_password"))
+                logger.warning(f"Failed to sync Anki password for {user.email}")
         except Exception as e:
-            print(f"Anki Sync Error: {e}")
+            logger.error(f"Anki password sync error for {user.email}: {e}")
 
         return Response({"message": "Đổi mật khẩu thành công!"}, status=status.HTTP_200_OK)
 

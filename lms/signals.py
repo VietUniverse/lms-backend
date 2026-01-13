@@ -2,7 +2,7 @@ from django.db.models.signals import pre_save, post_save
 from django.dispatch import receiver
 from django.core.mail import send_mail
 from django.conf import settings
-from .models import SupportTicket
+from .models import SupportTicket, Deck
 
 @receiver(pre_save, sender=SupportTicket)
 def capture_old_status(sender, instance, **kwargs):
@@ -61,3 +61,25 @@ Anki LMS Team
             )
         except Exception as e:
             print(f"Failed to send email: {e}")
+
+
+# ============================================
+# DECK AUTO-VERSIONING
+# ============================================
+
+@receiver(pre_save, sender=Deck)
+def auto_increment_deck_version(sender, instance, **kwargs):
+    """
+    Tự động tăng version khi Deck được update.
+    Chỉ tăng khi title hoặc file thay đổi (không tăng khi chỉ đổi status).
+    """
+    if instance.pk:
+        try:
+            old_deck = Deck.objects.get(pk=instance.pk)
+            # Chỉ tăng version khi nội dung thực sự thay đổi
+            if (old_deck.title != instance.title or 
+                old_deck.appwrite_file_id != instance.appwrite_file_id):
+                instance.version = old_deck.version + 1
+        except Deck.DoesNotExist:
+            pass
+

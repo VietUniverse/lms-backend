@@ -108,3 +108,39 @@ class SupportTicketSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         # User is handled in ViewSet perform_create
         return super().create(validated_data)
+
+
+# ============================================
+# ANKI ADDON INTEGRATION SERIALIZERS
+# ============================================
+
+class AnkiDeckSerializer(serializers.ModelSerializer):
+    """Serializer cho endpoint /api/anki/my-decks/."""
+    lms_deck_id = serializers.IntegerField(source='id')
+    
+    class Meta:
+        model = Deck
+        fields = ["lms_deck_id", "title", "version", "updated_at"]
+
+
+class AnkiReviewSerializer(serializers.Serializer):
+    """Serializer cho một review đơn lẻ trong batch."""
+    card_id = serializers.CharField()
+    ease = serializers.IntegerField(min_value=1, max_value=4)
+    time = serializers.IntegerField(min_value=0)  # milliseconds
+    timestamp = serializers.FloatField()  # Unix timestamp
+
+
+class AnkiProgressSerializer(serializers.Serializer):
+    """
+    Serializer cho endpoint /api/anki/progress/ (Batch Processing).
+    Addon gửi lên mảng reviews thay vì từng cái một.
+    """
+    lms_deck_id = serializers.IntegerField()
+    reviews = AnkiReviewSerializer(many=True)
+    
+    def validate_lms_deck_id(self, value):
+        if not Deck.objects.filter(pk=value).exists():
+            raise serializers.ValidationError("Deck không tồn tại.")
+        return value
+

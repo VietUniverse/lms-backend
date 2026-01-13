@@ -14,20 +14,23 @@ services:
   backend:
     build: .
     container_name: ankilms_backend
-    user: root  # Cần để truy cập docker.sock
+    user: root  # Required for Docker socket access (restart Anki container)
     environment:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgres://admin:password123@db:5432/ankilms_db
+      - ANKI_SYNC_DATA_PATH=/anki_data
+      - ANKI_SYNC_CONTAINER_NAME=ankilms_anki
     volumes:
       - .:/app
       - ./sync_data:/sync_data
-      # Mount docker socket để giao tiếp với Anki container
-      - /var/run/docker.sock:/var/run/docker.sock
+      - anki_data:/anki_data:ro  # Read-only access to Anki collections for analytics
+      - /var/run/docker.sock:/var/run/docker.sock  # Allow restarting Anki container
     ports:
       - "8000:8000"
     command: python manage.py runserver 0.0.0.0:8000
     depends_on:
       - db
+      - anki-sync
 
   # 3. Frontend (Next.js)
   frontend:
@@ -39,5 +42,19 @@ services:
     ports:
       - "3000:3000"
 
+  # 4. Anki Sync Server (Official Rust version - compatible with Anki 24/25)
+  anki-sync:
+    image: ghcr.io/ankitects/anki-sync-server:latest
+    container_name: ankilms_anki
+    env_file:
+      - ./sync_users.env  # Dynamic user list (SYNC_USER1=email:password)
+    volumes:
+      - anki_data:/anki_data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  anki_data:
+
