@@ -150,24 +150,35 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         # === INJECT DECK INTO STUDENT COLLECTIONS ===
         injection_results = {"success": [], "failed": [], "not_synced": []}
         
-        if deck.appwrite_file_id:
+        if deck.appwrite_file_id and deck.appwrite_file_id not in ['pending', 'local_upload']:
             try:
-                from .utils import download_from_appwrite
                 from .services.deck_injector import inject_deck_to_student
-                import tempfile
+                from django.conf import settings
                 
-                # Download deck file to temp location
-                with tempfile.NamedTemporaryFile(suffix='.apkg', delete=False) as tmp:
-                    tmp_path = tmp.name
-                
-                download_from_appwrite(deck.appwrite_file_id, tmp_path)
-                
-                # Read deck content
-                with open(tmp_path, 'rb') as f:
-                    deck_content = f.read()
-                
-                # Clean up temp file
-                os.unlink(tmp_path)
+                # Handle local files (format: local:filename.apkg)
+                if deck.appwrite_file_id.startswith('local:'):
+                    filename = deck.appwrite_file_id.replace('local:', '')
+                    local_path = os.path.join(settings.MEDIA_ROOT, 'decks', filename)
+                    
+                    if not os.path.exists(local_path):
+                        raise FileNotFoundError(f"Local deck file not found: {local_path}")
+                    
+                    with open(local_path, 'rb') as f:
+                        deck_content = f.read()
+                else:
+                    # Download from Appwrite
+                    from .utils import download_from_appwrite
+                    import tempfile
+                    
+                    with tempfile.NamedTemporaryFile(suffix='.apkg', delete=False) as tmp:
+                        tmp_path = tmp.name
+                    
+                    download_from_appwrite(deck.appwrite_file_id, tmp_path)
+                    
+                    with open(tmp_path, 'rb') as f:
+                        deck_content = f.read()
+                    
+                    os.unlink(tmp_path)
                 
                 # Inject to each student in class
                 for student in classroom.students.all():
@@ -359,7 +370,7 @@ class DeckViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["post"], url_path="upload", parser_classes=[MultiPartParser, FormParser])
     def upload(self, request):
-        """Upload .apkg file directly and parse cards (Bypassing Appwrite)."""
+        """Upload .apkg file directly and parse cards (Local storage)."""
         file_obj = request.FILES.get("file")
         title = request.data.get("title")
 
@@ -369,27 +380,38 @@ class DeckViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Create Deck
+        # Create Deck first to get ID
         deck = Deck.objects.create(
             teacher=request.user,
             title=title,
             card_count=0,
             status="DRAFT",
-            appwrite_file_id="local_upload", # Placeholder
+            appwrite_file_id="pending",  # Will be updated
         )
 
         try:
-            # Save uploaded file to temp
-            with tempfile.NamedTemporaryFile(suffix=".apkg", delete=False) as temp_file:
+            # Save uploaded file to permanent location
+            import os
+            from django.conf import settings
+            
+            # Create decks directory if not exists
+            decks_dir = os.path.join(settings.MEDIA_ROOT, 'decks')
+            os.makedirs(decks_dir, exist_ok=True)
+            
+            # Save with deck ID as filename
+            apkg_filename = f"deck_{deck.id}.apkg"
+            apkg_path = os.path.join(decks_dir, apkg_filename)
+            
+            with open(apkg_path, 'wb') as dest_file:
                 for chunk in file_obj.chunks():
-                    temp_file.write(chunk)
-                temp_path = temp_file.name
+                    dest_file.write(chunk)
+            
+            # Update deck with local file path
+            deck.appwrite_file_id = f"local:{apkg_filename}"
+            deck.save()
 
-            # Parse
-            parsed_cards = parse_anki_file(temp_path)
-
-            # Cleanup temp file
-            os.unlink(temp_path)
+            # Parse cards
+            parsed_cards = parse_anki_file(apkg_path)
 
             # Bulk create Card objects
             card_objects = [
@@ -885,41 +907,55 @@ def sync_pending_decks(request):
     
     for classroom in classrooms:
         for deck in classroom.decks.all():
-            if not deck.appwrite_file_id:
-                results["skipped"].append({"deck": deck.name, "reason": "No file"})
+            if not deck.appwrite_file_id or deck.appwrite_file_id in ['pending', 'local_upload']:
+                results["skipped"].append({"deck": deck.title, "reason": "No file"})
                 continue
             
             try:
-                import tempfile
-                
-                # Download deck to temp file
-                with tempfile.NamedTemporaryFile(suffix='.apkg', delete=False) as tmp:
-                    tmp_path = tmp.name
-                
-                download_from_appwrite(deck.appwrite_file_id, tmp_path)
-                
-                with open(tmp_path, 'rb') as f:
-                    deck_content = f.read()
-                
+                from django.conf import settings
                 import os
-                os.unlink(tmp_path)
+                
+                # Handle local files (format: local:filename.apkg)
+                if deck.appwrite_file_id.startswith('local:'):
+                    filename = deck.appwrite_file_id.replace('local:', '')
+                    local_path = os.path.join(settings.MEDIA_ROOT, 'decks', filename)
+                    
+                    if not os.path.exists(local_path):
+                        results["failed"].append({"deck": deck.title, "error": "File not found"})
+                        continue
+                    
+                    with open(local_path, 'rb') as f:
+                        deck_content = f.read()
+                else:
+                    # Download from Appwrite
+                    import tempfile
+                    
+                    with tempfile.NamedTemporaryFile(suffix='.apkg', delete=False) as tmp:
+                        tmp_path = tmp.name
+                    
+                    download_from_appwrite(deck.appwrite_file_id, tmp_path)
+                    
+                    with open(tmp_path, 'rb') as f:
+                        deck_content = f.read()
+                    
+                    os.unlink(tmp_path)
                 
                 # Inject deck
                 success, message = inject_deck_to_student(user.email, deck_content)
                 
                 if success:
                     results["injected"].append({
-                        "deck": deck.name,
+                        "deck": deck.title,
                         "classroom": classroom.name
                     })
                 else:
                     results["failed"].append({
-                        "deck": deck.name,
+                        "deck": deck.title,
                         "error": message
                     })
             except Exception as e:
                 results["failed"].append({
-                    "deck": deck.name,
+                    "deck": deck.title,
                     "error": str(e)
                 })
     
