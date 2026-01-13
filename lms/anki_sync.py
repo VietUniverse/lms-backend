@@ -244,54 +244,68 @@ def delete_anki_user(email: str) -> bool:
 
 def _restart_anki_container() -> bool:
     """
-    Recreate Anki sync container using docker compose.
+    Recreate Anki sync container to reload environment variables.
     
-    IMPORTANT: We use 'docker compose down/up' instead of 'docker restart'
-    because env_file is only read at container creation, not on restart.
+    IMPORTANT: Container restart doesn't reload env_file.
+    We need to stop, remove, and recreate the container.
     
     Returns:
         True if container was recreated successfully, False otherwise
     """
-    import subprocess
     import os
     
-    # Get the directory where docker-compose.yml is located
-    compose_dir = os.environ.get('ANKI_SYNC_COMPOSE_DIR', '/opt/anki-sync')
-    
     try:
-        # Try docker-compose (standalone) first, then docker compose (plugin)
-        for compose_cmd in ['docker-compose', 'docker compose']:
-            try:
-                # Down
-                result = subprocess.run(
-                    f'cd {compose_dir} && {compose_cmd} down',
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-                
-                # Up
-                result = subprocess.run(
-                    f'cd {compose_dir} && {compose_cmd} up -d',
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-                
-                if result.returncode == 0:
-                    logger.info(f"Anki container recreated successfully using {compose_cmd}")
-                    return True
-                    
-            except Exception:
-                continue
+        import docker
+        client = docker.from_env()
         
-        logger.error("Neither docker-compose nor docker compose worked")
-        return False
+        container_name = os.environ.get('ANKI_SYNC_CONTAINER_NAME', 'anki-sync')
+        env_file_path = os.environ.get('ANKI_SYNC_USERS_FILE', '/opt/anki-sync/sync_users.env')
+        data_path = '/opt/anki-sync/anki_data'
+        
+        # Read environment from file
+        env_vars = {'SYNC_BASE': '/data'}
+        try:
+            with open(env_file_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        env_vars[key] = value
+        except Exception as e:
+            logger.error(f"Error reading env file: {e}")
+            return False
+        
+        # Get existing container
+        try:
+            container = client.containers.get(container_name)
+            image = container.image.tags[0] if container.image.tags else container.image.id
             
-    except subprocess.TimeoutExpired:
-        logger.error("Docker compose command timed out")
+            # Stop and remove
+            container.stop(timeout=10)
+            container.remove()
+            logger.info(f"Stopped and removed container {container_name}")
+        except docker.errors.NotFound:
+            image = 'anki-sync-server:local'
+            logger.warning(f"Container {container_name} not found, will create new")
+        
+        # Create new container with updated env
+        new_container = client.containers.run(
+            image,
+            name=container_name,
+            detach=True,
+            restart_policy={'Name': 'always'},
+            environment=env_vars,
+            volumes={
+                data_path: {'bind': '/data', 'mode': 'rw'}
+            },
+            ports={'8080/tcp': 27701},
+        )
+        
+        logger.info(f"Created new container {container_name} with {len(env_vars)} env vars")
+        return True
+        
+    except ImportError:
+        logger.error("Docker SDK not installed. Run: pip install docker")
         return False
     except Exception as e:
         logger.error(f"Error recreating Anki container: {e}")
