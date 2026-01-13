@@ -259,35 +259,39 @@ def _restart_anki_container() -> bool:
     compose_dir = os.environ.get('ANKI_SYNC_COMPOSE_DIR', '/opt/anki-sync')
     
     try:
-        # Use docker compose to recreate container (reloads env_file)
-        result = subprocess.run(
-            ['docker', 'compose', 'down'],
-            cwd=compose_dir,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
+        # Try docker-compose (standalone) first, then docker compose (plugin)
+        for compose_cmd in ['docker-compose', 'docker compose']:
+            try:
+                # Down
+                result = subprocess.run(
+                    f'cd {compose_dir} && {compose_cmd} down',
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                
+                # Up
+                result = subprocess.run(
+                    f'cd {compose_dir} && {compose_cmd} up -d',
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                
+                if result.returncode == 0:
+                    logger.info(f"Anki container recreated successfully using {compose_cmd}")
+                    return True
+                    
+            except Exception:
+                continue
         
-        result = subprocess.run(
-            ['docker', 'compose', 'up', '-d'],
-            cwd=compose_dir,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        
-        if result.returncode == 0:
-            logger.info(f"Anki container recreated successfully")
-            return True
-        else:
-            logger.error(f"Docker compose error: {result.stderr}")
-            return False
+        logger.error("Neither docker-compose nor docker compose worked")
+        return False
             
     except subprocess.TimeoutExpired:
         logger.error("Docker compose command timed out")
-        return False
-    except FileNotFoundError:
-        logger.error("docker compose command not found")
         return False
     except Exception as e:
         logger.error(f"Error recreating Anki container: {e}")
