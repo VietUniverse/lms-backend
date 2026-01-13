@@ -23,6 +23,7 @@ urlpatterns = [
     path("anki/class/<int:class_id>/stats/", views.class_anki_stats, name="anki-class-stats"),
     path("anki/calendar/", views.anki_calendar, name="anki-calendar"),
     path("anki/sync-status/", views.anki_sync_status, name="anki-sync-status"),
+    path("anki/sync-pending-decks/", views.sync_pending_decks, name="anki-sync-pending-decks"),
     
     path("", include(router.urls)),
 ]

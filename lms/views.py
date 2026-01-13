@@ -130,7 +130,7 @@ class ClassroomViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="add_deck")
     def add_deck(self, request, pk=None):
-        """Thêm deck vào lớp."""
+        """Thêm deck vào lớp và tự động inject vào collection của students."""
         classroom = self.get_object()
         deck_id = request.data.get("deck_id")
         
@@ -146,7 +146,41 @@ class ClassroomViewSet(viewsets.ModelViewSet):
             return Response({"error": "Deck already in class"}, status=status.HTTP_400_BAD_REQUEST)
             
         classroom.decks.add(deck)
-        return Response({"message": "Deck added to class"}, status=status.HTTP_200_OK)
+        
+        # === INJECT DECK INTO STUDENT COLLECTIONS ===
+        injection_results = {"success": [], "failed": [], "not_synced": []}
+        
+        if deck.appwrite_file_id:
+            try:
+                from .utils import download_from_appwrite
+                from .services.deck_injector import inject_deck_to_student
+                
+                # Download deck file content
+                deck_content = download_from_appwrite(deck.appwrite_file_id)
+                
+                # Inject to each student in class
+                for student in classroom.students.all():
+                    success, message = inject_deck_to_student(student.email, deck_content)
+                    if success:
+                        injection_results["success"].append(student.email)
+                    elif "has not synced" in message:
+                        injection_results["not_synced"].append(student.email)
+                    else:
+                        injection_results["failed"].append({"email": student.email, "error": message})
+                        
+            except Exception as e:
+                import logging
+                logging.error(f"Deck injection error: {e}")
+        
+        return Response({
+            "message": "Deck added to class",
+            "injection": {
+                "injected": len(injection_results["success"]),
+                "not_synced_yet": len(injection_results["not_synced"]),
+                "failed": len(injection_results["failed"]),
+                "details": injection_results
+            }
+        }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="remove_deck")
     def remove_deck(self, request, pk=None):
@@ -798,9 +832,76 @@ def anki_sync_status(request):
         "email": request.user.email,
         "has_synced": has_synced,
         "last_sync": last_sync,
-        "sync_server_url": "http://localhost:8080",  # TODO: Make configurable
+        "sync_server_url": "https://sync.ankivn.com",
         "instructions": {
             "desktop": "Anki → Tools → Preferences → Syncing → Self-hosted sync server",
             "android": "AnkiDroid → Settings → Advanced → Custom sync server",
         } if not has_synced else None
     })
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def sync_pending_decks(request):
+    """
+    POST /api/anki/sync-pending-decks/
+    
+    Inject any pending decks that were assigned to student's classes
+    while they hadn't synced yet. Call this after first sync.
+    
+    This handles the case where:
+    1. Teacher assigns deck to class
+    2. Student hasn't synced yet (no collection)
+    3. Student syncs for first time (collection created)
+    4. Student calls this endpoint to get any missed decks
+    """
+    from .anki_sync import user_has_synced
+    from .services.deck_injector import inject_deck_to_student
+    from .utils import download_from_appwrite
+    
+    user = request.user
+    
+    if not user_has_synced(user.email):
+        return Response({
+            "error": "You must sync with Anki at least once first",
+            "has_synced": False
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Find all classes the student is in
+    classrooms = Classroom.objects.filter(students=user)
+    
+    results = {"injected": [], "failed": [], "skipped": []}
+    
+    for classroom in classrooms:
+        for deck in classroom.decks.all():
+            if not deck.appwrite_file_id:
+                results["skipped"].append({"deck": deck.name, "reason": "No file"})
+                continue
+            
+            try:
+                # Download and inject deck
+                deck_content = download_from_appwrite(deck.appwrite_file_id)
+                success, message = inject_deck_to_student(user.email, deck_content)
+                
+                if success:
+                    results["injected"].append({
+                        "deck": deck.name,
+                        "classroom": classroom.name
+                    })
+                else:
+                    results["failed"].append({
+                        "deck": deck.name,
+                        "error": message
+                    })
+            except Exception as e:
+                results["failed"].append({
+                    "deck": deck.name,
+                    "error": str(e)
+                })
+    
+    return Response({
+        "message": f"Injected {len(results['injected'])} decks",
+        "results": results,
+        "note": "Sync with Anki again to see the new decks"
+    })
+
