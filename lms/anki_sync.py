@@ -244,24 +244,53 @@ def delete_anki_user(email: str) -> bool:
 
 def _restart_anki_container() -> bool:
     """
-    Restart Anki sync container using Docker SDK.
-    Container restart is very fast (~2 seconds).
+    Recreate Anki sync container using docker compose.
+    
+    IMPORTANT: We use 'docker compose down/up' instead of 'docker restart'
+    because env_file is only read at container creation, not on restart.
     
     Returns:
-        True if container was restarted successfully, False otherwise
+        True if container was recreated successfully, False otherwise
     """
+    import subprocess
+    import os
+    
+    # Get the directory where docker-compose.yml is located
+    compose_dir = os.environ.get('ANKI_SYNC_COMPOSE_DIR', '/opt/anki-sync')
+    
     try:
-        import docker
-        client = docker.from_env()
-        container = client.containers.get(ANKI_CONTAINER_NAME)
-        container.restart(timeout=10)
-        logger.info(f"Anki container {ANKI_CONTAINER_NAME} restarted successfully")
-        return True
-    except ImportError:
-        logger.error("Docker SDK not installed. Run: pip install docker")
+        # Use docker compose to recreate container (reloads env_file)
+        result = subprocess.run(
+            ['docker', 'compose', 'down'],
+            cwd=compose_dir,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        result = subprocess.run(
+            ['docker', 'compose', 'up', '-d'],
+            cwd=compose_dir,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode == 0:
+            logger.info(f"Anki container recreated successfully")
+            return True
+        else:
+            logger.error(f"Docker compose error: {result.stderr}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        logger.error("Docker compose command timed out")
+        return False
+    except FileNotFoundError:
+        logger.error("docker compose command not found")
         return False
     except Exception as e:
-        logger.error(f"Error restarting Anki container: {e}")
+        logger.error(f"Error recreating Anki container: {e}")
         return False
 
 
