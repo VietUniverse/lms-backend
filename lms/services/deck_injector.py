@@ -95,9 +95,9 @@ class DeckInjector:
         except zipfile.BadZipFile:
             return False, "Invalid .apkg file (not a valid zip)"
         
-        # Find the collection database
+        # Find the collection database - prioritize anki21 (newer format with full data)
         source_db = None
-        for name in ['collection.anki2', 'collection.anki21']:
+        for name in ['collection.anki21', 'collection.anki2']:
             candidate = extract_dir / name
             if candidate.exists():
                 source_db = candidate
