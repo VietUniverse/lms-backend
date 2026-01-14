@@ -160,6 +160,11 @@ class DeckInjector:
             source_cur = source_conn.cursor()
             target_cur = target_conn.cursor()
             
+            # Log initial state
+            target_cur.execute("SELECT COUNT(*) FROM cards")
+            initial_cards = target_cur.fetchone()[0]
+            logger.info(f"Initial cards in target: {initial_cards}")
+            
             # Get current max IDs to avoid conflicts
             target_cur.execute("SELECT MAX(id) FROM notes")
             max_note_id = target_cur.fetchone()[0] or 0
@@ -169,20 +174,36 @@ class DeckInjector:
             
             # Import note types (models) - merge with existing
             self._import_notetypes(source_cur, target_cur)
+            logger.info("Notetypes merged successfully")
             
             # Import decks - merge with existing
             deck_id_map = self._import_decks(source_cur, target_cur)
+            logger.info(f"Decks merged: {deck_id_map}")
             
             # Import notes with ID offset
             note_id_map = self._import_notes(source_cur, target_cur, max_note_id)
+            logger.info(f"Notes imported: {len(note_id_map)}")
             
             # Import cards with ID offset and mapped note/deck IDs
             cards_imported = self._import_cards(
                 source_cur, target_cur, 
                 max_card_id, note_id_map, deck_id_map
             )
+            logger.info(f"Cards imported: {cards_imported}")
+            
+            # CRITICAL: Reset USN to trigger sync
+            target_cur.execute("UPDATE cards SET usn = -1 WHERE usn >= 0")
+            target_cur.execute("UPDATE notes SET usn = -1 WHERE usn >= 0")
+            target_cur.execute("UPDATE col SET usn = -1, mod = (SELECT strftime('%s','now') * 1000)")
+            logger.info("USN reset to trigger sync")
             
             target_conn.commit()
+            
+            # Log final state
+            target_cur.execute("SELECT COUNT(*) FROM cards")
+            final_cards = target_cur.fetchone()[0]
+            logger.info(f"Final cards in target: {final_cards}")
+            
             return cards_imported
             
         finally:
