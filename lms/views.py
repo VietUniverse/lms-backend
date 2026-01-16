@@ -631,29 +631,44 @@ def anki_deck_download(request, deck_id):
     else:
         return Response({"error": "Không có quyền truy cập deck này"}, status=status.HTTP_403_FORBIDDEN)
     
-    # Download từ Appwrite và stream về client
+    # Download từ Appwrite hoặc local và stream về client
     if not deck.appwrite_file_id or deck.appwrite_file_id == "local_upload":
         return Response({"error": "Deck chưa có file"}, status=status.HTTP_404_NOT_FOUND)
     
     try:
-        # Download từ Appwrite to temp file
         import tempfile
         import os
+        from django.http import HttpResponse
+        from django.conf import settings as django_settings
         
-        with tempfile.NamedTemporaryFile(suffix='.apkg', delete=False) as tmp_file:
-            tmp_path = tmp_file.name
+        file_id = deck.appwrite_file_id
         
-        download_from_appwrite(deck.appwrite_file_id, tmp_path)
-        
-        # Read and stream response
-        with open(tmp_path, 'rb') as f:
-            file_content = f.read()
-        
-        # Cleanup temp file
-        os.unlink(tmp_path)
+        # Check if it's a local file (format: "local:filename.apkg")
+        if file_id.startswith("local:"):
+            # Local file - read from media/decks/
+            filename = file_id.replace("local:", "")
+            local_path = os.path.join(django_settings.MEDIA_ROOT, "decks", filename)
+            
+            if not os.path.exists(local_path):
+                return Response({"error": f"File không tồn tại: {filename}"}, status=status.HTTP_404_NOT_FOUND)
+            
+            with open(local_path, 'rb') as f:
+                file_content = f.read()
+        else:
+            # Appwrite file - download to temp file
+            with tempfile.NamedTemporaryFile(suffix='.apkg', delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+            
+            download_from_appwrite(file_id, tmp_path)
+            
+            # Read and stream response
+            with open(tmp_path, 'rb') as f:
+                file_content = f.read()
+            
+            # Cleanup temp file
+            os.unlink(tmp_path)
         
         # Stream response
-        from django.http import HttpResponse
         response = HttpResponse(file_content, content_type='application/octet-stream')
         response['Content-Disposition'] = f'attachment; filename="{deck.title}.apkg"'
         # Add lms_deck_id header for addon to read
