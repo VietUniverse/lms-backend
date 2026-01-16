@@ -70,59 +70,85 @@ def save_config(config: Dict[str, Any]) -> None:
 def get_anki_sync_email() -> Optional[str]:
     """
     Get the email/username from Anki's sync configuration.
-    This is the email user used to log into the Anki sync server.
+    Works with Anki 24.x and 25.x (self-hosted sync servers).
     """
     if not ANKI_AVAILABLE or not mw:
+        print("LMS: Anki not available")
         return None
     
     try:
-        # Anki stores sync auth in the profile
-        # For Anki 2.1.x, the sync auth is stored differently
-        
-        # Method 1: Try to get from sync media
+        # Method 1: Anki 24+ - Use sync_auth() from profile manager
         if hasattr(mw, 'pm') and mw.pm:
-            # Profile manager has sync info
-            profile = mw.pm.profile
-            if profile:
-                # Check for hkey (sync key) and username
-                sync_user = profile.get('syncUser')
-                if sync_user:
-                    return sync_user
+            # sync_auth returns (hkey, username) or None
+            try:
+                auth = mw.pm.sync_auth()
+                if auth:
+                    # auth is a NamedTuple with hkey and username
+                    if hasattr(auth, 'username') and auth.username:
+                        print(f"LMS: Found sync email via sync_auth: {auth.username}")
+                        return auth.username
+                    # Fallback for older format
+                    if isinstance(auth, tuple) and len(auth) >= 2:
+                        print(f"LMS: Found sync email via tuple: {auth[1]}")
+                        return auth[1]
+            except Exception as e:
+                print(f"LMS: sync_auth error: {e}")
         
-        # Method 2: Try to get from sync_auth 
-        if hasattr(mw, 'col') and mw.col:
-            # Check collection's sync settings
-            conf = mw.col.get_config("sync", {})
-            if isinstance(conf, dict):
-                email = conf.get("username") or conf.get("email")
-                if email:
-                    return email
-        
-        # Method 3: Read from Anki's meta file
+        # Method 2: Check profile directly
         if hasattr(mw, 'pm') and mw.pm:
-            profile_folder = mw.pm.profileFolder()
-            meta_path = os.path.join(profile_folder, "prefs21.db")
-            if os.path.exists(meta_path):
-                import sqlite3
-                conn = sqlite3.connect(meta_path)
-                cursor = conn.cursor()
-                try:
-                    cursor.execute("SELECT cast(data as text) FROM profiles WHERE name = 'meta'")
-                    row = cursor.fetchone()
-                    if row:
-                        meta = json.loads(row[0])
-                        email = meta.get("syncUser") or meta.get("email")
-                        if email:
-                            return email
-                except Exception:
-                    pass
-                finally:
-                    conn.close()
+            try:
+                profile = mw.pm.profile
+                if profile and isinstance(profile, dict):
+                    # Try different keys
+                    for key in ['syncUser', 'syncUsername', 'sync_user', 'username']:
+                        if key in profile and profile[key]:
+                            print(f"LMS: Found sync email in profile[{key}]: {profile[key]}")
+                            return profile[key]
+            except Exception as e:
+                print(f"LMS: profile check error: {e}")
         
+        # Method 3: Read from prefs21.db (Anki's profile database)
+        if hasattr(mw, 'pm') and mw.pm:
+            try:
+                base = mw.pm.base
+                prefs_path = os.path.join(base, "prefs21.db")
+                if os.path.exists(prefs_path):
+                    import sqlite3
+                    conn = sqlite3.connect(prefs_path, timeout=1)
+                    cursor = conn.cursor()
+                    try:
+                        cursor.execute("SELECT data FROM profiles")
+                        for row in cursor.fetchall():
+                            try:
+                                data = json.loads(row[0])
+                                for key in ['syncUser', 'syncUsername', 'username']:
+                                    if key in data and data[key]:
+                                        print(f"LMS: Found in prefs21.db: {data[key]}")
+                                        return data[key]
+                            except (json.JSONDecodeError, TypeError):
+                                continue
+                    finally:
+                        conn.close()
+            except Exception as e:
+                print(f"LMS: prefs21.db error: {e}")
+        
+        # Method 4: Check sync endpoint config 
+        if hasattr(mw, 'pm') and mw.pm:
+            try:
+                # Get custom sync URL
+                sync_endpoint = getattr(mw.pm, 'sync_endpoint', None)
+                if sync_endpoint:
+                    print(f"LMS: Custom sync endpoint detected: {sync_endpoint}")
+            except Exception:
+                pass
+        
+        print("LMS: Could not detect Anki sync email")
         return None
         
     except Exception as e:
-        print(f"Error getting Anki sync email: {e}")
+        print(f"LMS: Error in get_anki_sync_email: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 

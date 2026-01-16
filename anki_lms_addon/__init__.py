@@ -28,18 +28,71 @@ def ensure_logged_in() -> bool:
     Ensure user is logged in. Tries auto-login first.
     Returns True if logged in, False otherwise.
     """
+    print("LMS: Checking login status...")
+    
     if config.is_logged_in():
+        print("LMS: Already logged in")
         return True
     
+    # Check if we can get Anki sync email
+    sync_email = config.get_anki_sync_email()
+    print(f"LMS: Detected Anki sync email: {sync_email}")
+    
+    if not sync_email:
+        print("LMS: Cannot detect Anki sync email - manual login required")
+        return False
+    
     # Try auto-login using Anki sync credentials
+    print("LMS: Attempting auto-login via token exchange...")
     client = LMSClient()
     user = client.auto_login()
     
     if user:
+        print(f"LMS: Auto-login successful for {user.get('email', 'User')}")
         tooltip(f"LMS: Đã tự động đăng nhập - {user.get('email', 'User')}")
         return True
     
+    print("LMS: Auto-login failed")
     return False
+
+
+def debug_sync_info():
+    """Debug function to show sync detection info."""
+    from aqt.utils import showText
+    
+    info_lines = ["=== LMS Addon Debug Info ===\n"]
+    
+    # Check Anki sync email
+    email = config.get_anki_sync_email()
+    info_lines.append(f"Anki Sync Email: {email or 'NOT DETECTED'}")
+    
+    # Check LMS status
+    info_lines.append(f"LMS URL: {config.get_lms_url()}")
+    info_lines.append(f"LMS Logged In: {config.is_logged_in()}")
+    info_lines.append(f"LMS User: {config.get_user_email() or 'None'}")
+    
+    # Check profile manager
+    if mw.pm:
+        info_lines.append(f"\n--- Anki Profile Manager ---")
+        info_lines.append(f"Base path: {mw.pm.base}")
+        
+        # Try sync_auth
+        try:
+            auth = mw.pm.sync_auth()
+            info_lines.append(f"sync_auth(): {auth}")
+        except Exception as e:
+            info_lines.append(f"sync_auth() error: {e}")
+        
+        # Check profile dict
+        try:
+            profile = mw.pm.profile
+            info_lines.append(f"profile type: {type(profile)}")
+            if profile:
+                info_lines.append(f"profile keys: {list(profile.keys()) if isinstance(profile, dict) else 'N/A'}")
+        except Exception as e:
+            info_lines.append(f"profile error: {e}")
+    
+    showText("\n".join(info_lines), title="LMS Debug Info")
 
 
 # ============================================
@@ -313,6 +366,13 @@ def setup_menu():
     settings_action = QAction("Cài đặt", mw)
     settings_action.triggered.connect(show_settings)
     menu.addAction(settings_action)
+    
+    menu.addSeparator()
+    
+    # Debug action
+    debug_action = QAction("🐛 Debug Info", mw)
+    debug_action.triggered.connect(debug_sync_info)
+    menu.addAction(debug_action)
 
 
 def register_hooks():
