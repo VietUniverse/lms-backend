@@ -78,31 +78,38 @@ def on_sync() -> None:
 
 def _download_and_import(client: LMSClient, deck_id: int, title: str) -> bool:
     """Download and import a single deck."""
+    temp_path = None
     try:
         content, lms_deck_id, version = client.download_deck(deck_id)
         
-        # Save to temp file
-        with tempfile.NamedTemporaryFile(suffix=".apkg", delete=False) as f:
-            f.write(content)
-            temp_path = f.name
+        # Save to temp file - Use delete=False and close immediately for Windows
+        # Windows needs file to be closed before other processes can access it
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"lms_deck_{deck_id}_{version}.apkg")
         
-        try:
-            # Import into Anki
-            importer = AnkiPackageImporter(mw.col, temp_path)
-            importer.run()
-            
-            # Try to extract LMS deck ID from deck description
-            _register_imported_deck(title, lms_deck_id)
-            
-            return True
-        finally:
-            # Cleanup temp file
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-                
+        with open(temp_path, 'wb') as f:
+            f.write(content)
+        # File is now closed and safe to use
+        
+        # Import into Anki
+        importer = AnkiPackageImporter(mw.col, temp_path)
+        importer.run()
+        
+        # Try to extract LMS deck ID from deck description
+        _register_imported_deck(title, lms_deck_id)
+        
+        return True
+        
     except Exception as e:
         showWarning(f"Lỗi import deck {title}: {e}")
         return False
+    finally:
+        # Cleanup temp file
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass  # Ignore cleanup errors
 
 
 def _register_imported_deck(title: str, lms_deck_id: int) -> None:
