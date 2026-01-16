@@ -20,7 +20,7 @@ except ImportError:
     ANKI_AVAILABLE = False
 
 # Default LMS Backend URL - Should match your deployment
-DEFAULT_LMS_URL = "https://lms.ankivn.com"
+DEFAULT_LMS_URL = "https://api.ankivn.com"
 
 # Shared secret for token exchange - MUST match server's ANKI_ADDON_SECRET
 # In production, this should be configured securely
