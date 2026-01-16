@@ -636,8 +636,21 @@ def anki_deck_download(request, deck_id):
         return Response({"error": "Deck chưa có file"}, status=status.HTTP_404_NOT_FOUND)
     
     try:
-        # Download từ Appwrite
-        file_content = download_from_appwrite(deck.appwrite_file_id)
+        # Download từ Appwrite to temp file
+        import tempfile
+        import os
+        
+        with tempfile.NamedTemporaryFile(suffix='.apkg', delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+        
+        download_from_appwrite(deck.appwrite_file_id, tmp_path)
+        
+        # Read and stream response
+        with open(tmp_path, 'rb') as f:
+            file_content = f.read()
+        
+        # Cleanup temp file
+        os.unlink(tmp_path)
         
         # Stream response
         from django.http import HttpResponse
