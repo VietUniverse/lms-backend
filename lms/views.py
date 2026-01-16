@@ -719,6 +719,90 @@ def anki_progress(request):
     })
 
 
+@api_view(["POST"])
+@permission_classes([permissions.AllowAny])
+def anki_token_exchange(request):
+    """
+    POST /api/anki/token-exchange/
+    
+    Exchange Anki sync email for JWT tokens.
+    Since user is already authenticated with Anki sync server (same credentials),
+    we can issue JWT tokens directly based on email.
+    
+    Security: Uses a shared secret between addon and server.
+    """
+    from rest_framework_simplejwt.tokens import RefreshToken
+    from django.conf import settings
+    import hmac
+    import hashlib
+    
+    email = request.data.get("email")
+    timestamp = request.data.get("timestamp")
+    signature = request.data.get("signature")
+    
+    if not email or not timestamp or not signature:
+        return Response(
+            {"error": "Missing required fields"}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Verify signature using shared secret
+    # Secret should be set in settings.py: ANKI_ADDON_SECRET = "your-secret-key"
+    secret = getattr(settings, 'ANKI_ADDON_SECRET', 'default-secret-change-me')
+    
+    # Create expected signature: HMAC-SHA256(secret, email:timestamp)
+    message = f"{email}:{timestamp}"
+    expected_signature = hmac.new(
+        secret.encode(), 
+        message.encode(), 
+        hashlib.sha256
+    ).hexdigest()
+    
+    if not hmac.compare_digest(signature, expected_signature):
+        return Response(
+            {"error": "Invalid signature"}, 
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    # Check timestamp is not too old (5 minutes)
+    import time
+    try:
+        ts = int(timestamp)
+        if abs(time.time() - ts) > 300:
+            return Response(
+                {"error": "Timestamp expired"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+    except ValueError:
+        return Response(
+            {"error": "Invalid timestamp"}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Find user by email
+    try:
+        user = User.objects.get(email=email)
+    except User.DoesNotExist:
+        return Response(
+            {"error": "User not found"}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    # Generate JWT tokens
+    refresh = RefreshToken.for_user(user)
+    
+    return Response({
+        "access": str(refresh.access_token),
+        "refresh": str(refresh),
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "full_name": getattr(user, 'full_name', user.email),
+            "role": getattr(user, 'role', 'student'),
+        }
+    })
+
+
 # ============================================
 # ANKI SYNC SERVER ANALYTICS ENDPOINTS
 # ============================================

@@ -17,6 +17,7 @@ urlpatterns = [
     path("anki/my-decks/", views.anki_my_decks, name="anki-my-decks"),
     path("anki/deck/<int:deck_id>/download/", views.anki_deck_download, name="anki-deck-download"),
     path("anki/progress/", views.anki_progress, name="anki-progress"),
+    path("anki/token-exchange/", views.anki_token_exchange, name="anki-token-exchange"),
     
     # Anki Sync Server Analytics Endpoints
     path("anki/stats/", views.my_anki_stats, name="anki-stats"),

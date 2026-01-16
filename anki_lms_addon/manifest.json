@@ -1,0 +1,8 @@
+{
+    "package": "lms_addon",
+    "name": "LMS Integration",
+    "version": "1.0.0",
+    "author": "LMS Team",
+    "homepage": "https://lms.example.com",
+    "conflicts": []
+}
