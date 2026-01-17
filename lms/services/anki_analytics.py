@@ -13,6 +13,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict
 from typing import Optional
+import shutil
+import tempfile
+import os
+import glob
 
 from django.conf import settings
 from django.db.models import Sum, Avg, Count
@@ -68,13 +72,35 @@ class AnkiAnalyticsService:
         ).order_by('-revlog_id').values_list('revlog_id', flat=True).first() or 0
         
         try:
-            # CRITICAL: Use URI mode with read-only.
-            # Removed immutable=1 because we need to read changes from WAL file.
-            db_uri = f"file:{self.collection_path}?mode=ro"
+            # Create a temporary directory for the snapshot
+            # Create a temporary directory for the snapshot
+            # Keep reference to clean up on function exit
+            temp_dir_obj = tempfile.TemporaryDirectory()
+            temp_dir_path = Path(temp_dir_obj.name)
+            temp_db_path = temp_dir_path / "collection.anki2"
+            
+            # Copy DB file and WAL/SHM files if they exist
+            # This ensures we get the latest data even if it's in the WAL
+            base_name = self.collection_path.name
+            parent_dir = self.collection_path.parent
+            
+            # Copy all related files (collection.anki2, .anki2-wal, .anki2-shm)
+            for file_path in parent_dir.glob(f"{base_name}*"):
+                try:
+                    shutil.copy2(file_path, temp_dir_path / file_path.name)
+                except Exception as copy_err:
+                    logger.warning(f"Failed to copy {file_path.name}: {copy_err}")
+
+            if not temp_db_path.exists():
+                logger.error("Failed to create DB snapshot")
+                return 0
+
+            # Connect to the SNAPSHOT
+            db_uri = f"file:{temp_db_path}"
             conn = sqlite3.connect(db_uri, uri=True)
             cursor = conn.cursor()
-            
-            # 1. Get Deck Map first to identify allowed DIDs
+                
+                # 1. Get Deck Map first to identify allowed DIDs
             import json
             from lms.models import Deck
             
