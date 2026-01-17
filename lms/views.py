@@ -605,21 +605,38 @@ def anki_my_decks(request):
     return Response(serializer.data)
 
 
-@api_view(["GET"])
-@permission_classes([permissions.IsAuthenticated])
+from django.views.decorators.http import require_GET
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+
+@require_GET
 def anki_deck_download(request, deck_id):
     """
     GET /api/anki/deck/{id}/download/
     Download file .apkg của deck.
-    Sử dụng FileResponse để stream file, tránh load cả file vào RAM.
+    
+    NOTE: This is a plain Django view (not DRF) to bypass content negotiation
+    and allow Accept: application/octet-stream header for binary file download.
     """
+    from django.http import HttpResponse, JsonResponse
+    
+    # Manual JWT authentication
+    auth = JWTAuthentication()
+    try:
+        auth_result = auth.authenticate(request)
+        if auth_result is None:
+            return JsonResponse({"error": "Authentication required"}, status=401)
+        user, token = auth_result
+    except (InvalidToken, TokenError) as e:
+        return JsonResponse({"error": f"Invalid token: {str(e)}"}, status=401)
+    
     try:
         deck = Deck.objects.get(pk=deck_id, status="ACTIVE")
     except Deck.DoesNotExist:
-        return Response({"error": "Deck không tồn tại"}, status=status.HTTP_404_NOT_FOUND)
+        return JsonResponse({"error": "Deck không tồn tại"}, status=404)
     
     # Kiểm tra quyền: học sinh phải enrolled trong lớp có deck này
-    user = request.user
+    # user already obtained from JWT auth above
     user_classes = user.enrolled_classes.all() if user.role == "student" else []
     deck_classes = deck.classrooms.all()
     
@@ -629,11 +646,11 @@ def anki_deck_download(request, deck_id):
     elif user.role == "student" and deck_classes.filter(pk__in=[c.pk for c in user_classes]).exists():
         pass  # OK
     else:
-        return Response({"error": "Không có quyền truy cập deck này"}, status=status.HTTP_403_FORBIDDEN)
+        return JsonResponse({"error": "Không có quyền truy cập deck này"}, status=403)
     
     # Download từ Appwrite hoặc local và stream về client
     if not deck.appwrite_file_id or deck.appwrite_file_id == "local_upload":
-        return Response({"error": "Deck chưa có file"}, status=status.HTTP_404_NOT_FOUND)
+        return JsonResponse({"error": "Deck chưa có file"}, status=404)
     
     try:
         import tempfile
@@ -679,7 +696,7 @@ def anki_deck_download(request, deck_id):
         # Verify file is valid APKG (starts with PK - ZIP signature)
         if len(file_content) < 4 or file_content[:2] != b'PK':
             logger.error(f"Invalid APKG file! Size: {len(file_content)}, Header: {file_content[:20]}")
-            return Response({"error": "File APKG không hợp lệ"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return JsonResponse({"error": "File APKG không hợp lệ"}, status=500)
         
         logger.info(f"Sending deck {deck.title}: {len(file_content)} bytes")
         
@@ -695,7 +712,7 @@ def anki_deck_download(request, deck_id):
     except Exception as e:
         import traceback
         logging.error(f"Download error: {traceback.format_exc()}")
-        return Response({"error": f"Lỗi download: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return JsonResponse({"error": f"Lỗi download: {str(e)}"}, status=500)
 
 
 @api_view(["POST"])
