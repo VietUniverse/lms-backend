@@ -32,15 +32,15 @@ services:
       - db
       - anki-sync
 
-  # 3. Frontend (Next.js)
-  frontend:
-    build: ./frontend
-    container_name: ankilms_frontend
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    ports:
-      - "3000:3000"
+  # 3. Frontend (Next.js) - DISABLED FOR BACKEND-ONLY DEPLOYMENT
+  # frontend:
+  #   build: ./frontend
+  #   container_name: ankilms_frontend
+  #   volumes:
+  #     - ./frontend:/app
+  #     - /app/node_modules
+  #   ports:
+  #     - "3000:3000"
 
   # 4. Anki Sync Server (Official Rust version - compatible with Anki 24/25)
   anki-sync:
