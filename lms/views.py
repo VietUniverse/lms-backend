@@ -775,6 +775,48 @@ def anki_progress(request):
     ).values('card_id').distinct().count()
     progress.save()
     
+    # 4. Update DailyStudyStats for today
+    from .models import DailyStudyStats, StudentStreak
+    today = timezone.now().date()
+    
+    daily_stats, created = DailyStudyStats.objects.get_or_create(
+        student=request.user,
+        date=today,
+        defaults={
+            'cards_reviewed': 0,
+            'time_spent_seconds': 0,
+            'cards_learned': 0,
+            'retention_rate': 0,
+        }
+    )
+    
+    # Aggregate today's stats from CardReview
+    daily_stats.cards_reviewed += len(reviews_data)
+    daily_stats.time_spent_seconds += total_time_ms // 1000
+    
+    # Count new cards (first time seen today with ease >= 3)
+    good_easy_count = sum(1 for r in reviews_data if r['ease'] >= 3)
+    again_count = sum(1 for r in reviews_data if r['ease'] == 1)
+    
+    daily_stats.cards_learned += good_easy_count
+    
+    # Calculate retention rate (% not marked Again)
+    if len(reviews_data) > 0:
+        new_retention = (len(reviews_data) - again_count) / len(reviews_data)
+        # Weighted average with existing
+        if daily_stats.cards_reviewed > len(reviews_data):
+            old_weight = (daily_stats.cards_reviewed - len(reviews_data)) / daily_stats.cards_reviewed
+            new_weight = len(reviews_data) / daily_stats.cards_reviewed
+            daily_stats.retention_rate = (daily_stats.retention_rate * old_weight) + (new_retention * new_weight)
+        else:
+            daily_stats.retention_rate = new_retention
+    
+    daily_stats.save()
+    
+    # 5. Update StudentStreak
+    streak, _ = StudentStreak.objects.get_or_create(student=request.user)
+    streak.update_streak(today)
+    
     return Response({
         "status": "synced",
         "synced_count": len(review_objects),

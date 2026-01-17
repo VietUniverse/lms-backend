@@ -13,6 +13,9 @@ class StudentSerializer(serializers.ModelSerializer):
 
 
 class DeckSerializer(serializers.ModelSerializer):
+    class_name = serializers.SerializerMethodField()
+    class_id = serializers.SerializerMethodField()
+
     class Meta:
         model = Deck
         fields = [
@@ -23,8 +26,19 @@ class DeckSerializer(serializers.ModelSerializer):
             "card_count",
             "status",
             "created_at",
+            "class_name",
+            "class_id",
         ]
         read_only_fields = ["id", "created_at", "status"]
+
+    def get_class_name(self, obj):
+        # Get first classroom this deck is assigned to
+        classroom = obj.classrooms.first()
+        return classroom.name if classroom else None
+
+    def get_class_id(self, obj):
+        classroom = obj.classrooms.first()
+        return classroom.id if classroom else None
 
 
 class TestBriefSerializer(serializers.ModelSerializer):
