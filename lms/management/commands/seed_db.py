@@ -23,12 +23,15 @@ class Command(BaseCommand):
             student.save()
             self.stdout.write(self.style.SUCCESS('✅ Created Student: sinhvien1@test.com / password123'))
 
-        # 3. Class
+        # 3. Class (Teacher is Admin)
+        admin = User.objects.get(email='admin@root.com')
         classroom, created = Classroom.objects.get_or_create(
             name='IELTS Intensity',
             defaults={
                 'description': 'Lớp học IELTS cấp tốc', 
-                'code': 'IELTS101'
+                'join_code': 'IELTS101',
+                'teacher': admin,
+                'status': 'ACTIVE'
             }
         )
         if created:
