@@ -138,11 +138,30 @@ def _download_and_import(client: LMSClient, deck_id: int, title: str) -> bool:
             showWarning(f"Lỗi: File không phải ZIP hợp lệ (có thể bị truncate trong quá trình download).\n\nKích thước: {saved_size} bytes\nLỗi: {e}")
             return False
         
-        # Import into Anki
-        importer = AnkiPackageImporter(mw.col, temp_path)
-        importer.run()
-        
-        print(f"[LMS] Import completed for {title}")
+        # Import into Anki using the proper method
+        try:
+            importer = AnkiPackageImporter(mw.col, temp_path)
+            importer.run()
+            
+            # CRITICAL: Save collection and reset UI to avoid database inconsistency
+            # This prevents the "No such deck" error that requires Check Database
+            mw.col.save()
+            
+            # Reset the main window to refresh deck list
+            mw.reset()
+            
+            print(f"[LMS] Import completed for {title}")
+        except Exception as import_error:
+            print(f"[LMS] Import error: {import_error}")
+            # Try to recover by running check database automatically
+            try:
+                from aqt.operations.collection import check_collection
+                check_collection(parent=mw)
+                print(f"[LMS] Auto-ran check database after error")
+            except Exception:
+                pass
+            showWarning(f"Lỗi import deck {title}: {import_error}")
+            return False
         
         # Try to extract LMS deck ID from deck description
         _register_imported_deck(title, lms_deck_id)
