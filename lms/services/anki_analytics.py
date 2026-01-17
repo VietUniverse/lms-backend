@@ -68,9 +68,9 @@ class AnkiAnalyticsService:
         ).order_by('-revlog_id').values_list('revlog_id', flat=True).first() or 0
         
         try:
-            # CRITICAL: Use URI mode with read-only + immutable to prevent locking
-            # This ensures we never block Anki sync operations
-            db_uri = f"file:{self.collection_path}?mode=ro&immutable=1"
+            # CRITICAL: Use URI mode with read-only.
+            # Removed immutable=1 because we need to read changes from WAL file.
+            db_uri = f"file:{self.collection_path}?mode=ro"
             conn = sqlite3.connect(db_uri, uri=True)
             cursor = conn.cursor()
             
