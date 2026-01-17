@@ -74,8 +74,30 @@ class AnkiAnalyticsService:
             conn = sqlite3.connect(db_uri, uri=True)
             cursor = conn.cursor()
             
-            # Query revlog table
-            # Columns: id (timestamp ms), cid (card id), usn, ease, ivl, lastIvl, factor, time, type
+            # 1. Get Deck Map first to identify allowed DIDs
+            import json
+            from lms.models import Deck
+            
+            # Get list of ALL LMS deck titles to filter
+            # Note: We match by exact title. If student renamed deck, it won't sync.
+            lms_deck_titles = set(Deck.objects.values_list('title', flat=True))
+            
+            cursor.execute("SELECT decks FROM col LIMIT 1")
+            decks_json = cursor.fetchone()[0]
+            decks_data = json.loads(decks_json)
+            # {did: {name: '...', ...}}
+            # Filter dids that match LMS titles
+            allowed_dids = {
+                int(did) for did, data in decks_data.items() 
+                if data['name'] in lms_deck_titles
+            }
+            
+            if not allowed_dids:
+                logger.info(f"No matching LMS decks found in Anki collection for {self.student.email}")
+                conn.close()
+                return 0
+
+            # 2. Query New Revlogs
             cursor.execute("""
                 SELECT id, cid, usn, ease, ivl, lastIvl, factor, time, type
                 FROM revlog
@@ -84,30 +106,60 @@ class AnkiAnalyticsService:
                 LIMIT 10000
             """, (last_synced,))
             
-            new_entries = []
-            for row in cursor.fetchall():
-                new_entries.append(AnkiRevlog(
-                    student=self.student,
-                    revlog_id=row[0],
-                    card_id=row[1],
-                    usn=row[2],
-                    button_chosen=row[3],
-                    interval=row[4],
-                    last_interval=row[5],
-                    ease_factor=row[6],
-                    taken_millis=row[7],
-                    review_kind=row[8],
-                ))
+            rows = cursor.fetchall()
+            if not rows:
+                conn.close()
+                return 0
+                
+            # 3. Get Card -> Deck mapping for these entries to filter
+            card_ids = list({r[1] for r in rows}) # r[1] is cid
             
-            conn.close()
+            # Chunking card queries
+            card_did_map = {}
+            chunk_size = 900
+            for i in range(0, len(card_ids), chunk_size):
+                chunk = card_ids[i:i + chunk_size]
+                placeholders = ','.join(['?'] * len(chunk))
+                cursor.execute(f"SELECT id, did FROM cards WHERE id IN ({placeholders})", chunk)
+                for cid, did in cursor.fetchall():
+                    card_did_map[cid] = did
+            
+            # 4. Filter entries
+            new_entries = []
+            filtered_count = 0
+            for row in rows:
+                cid = row[1]
+                did = card_did_map.get(cid)
+                if did in allowed_dids:
+                    new_entries.append(AnkiRevlog(
+                        student=self.student,
+                        revlog_id=row[0],
+                        card_id=row[1],
+                        usn=row[2],
+                        button_chosen=row[3],
+                        interval=row[4],
+                        last_interval=row[5],
+                        ease_factor=row[6],
+                        taken_millis=row[7],
+                        review_kind=row[8],
+                    ))
+                else:
+                    filtered_count += 1
+            
+            logger.info(f"Filtered out {filtered_count} non-LMS entries. Keeping {len(new_entries)} entries.")
             
             if new_entries:
                 AnkiRevlog.objects.bulk_create(new_entries, ignore_conflicts=True)
                 self._update_daily_stats(new_entries)
+                # Ensure we pass the conn for _update_progress if it needs it, 
+                # though _update_progress re-queries, it should be fine.
+                # Actually _update_progress logic also relies on all entries being passed?
+                # Yes, we pass 'new_entries' which are already filtered.
                 self._update_progress(new_entries, conn)
                 self._update_streak()
                 logger.info(f"Synced {len(new_entries)} revlog entries for {self.student.email}")
             
+            conn.close()
             return len(new_entries)
             
         except sqlite3.OperationalError as e:
