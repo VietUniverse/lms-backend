@@ -1,7 +1,6 @@
 from django.core.management.base import BaseCommand
 from accounts.models import User
 from lms.models import Classroom, Deck
-from django.db import IntegrityError
 
 class Command(BaseCommand):
     help = 'Seeds database with test data (Admin, Student, Class, Deck)'
@@ -9,35 +8,35 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         self.stdout.write('🌱 Seeding database...')
 
-        # 1. Superuser
+        # 1. Superuser (Lookup by EMAIL - custom User model uses email as primary)
         try:
-            admin = User.objects.get(username='admin@root.com')
-            admin.email = 'admin@root.com'
+            admin = User.objects.get(email='admin@root.com')
             admin.set_password('password123')
+            admin.is_staff = True
+            admin.is_superuser = True
             admin.save()
             self.stdout.write(self.style.SUCCESS('✅ Found/Updated Admin: admin@root.com'))
         except User.DoesNotExist:
-            User.objects.create_superuser(username='admin@root.com', email='admin@root.com', password='password123')
+            admin = User(email='admin@root.com', is_staff=True, is_superuser=True)
+            admin.set_password('password123')
+            admin.save()
             self.stdout.write(self.style.SUCCESS('✅ Created Admin: admin@root.com'))
         
-        # 2. Student
+        # 2. Student (Lookup by EMAIL)
         try:
-            student = User.objects.get(username='sinhvien1@test.com')
-            student.email = 'sinhvien1@test.com'
+            student = User.objects.get(email='sinhvien1@test.com')
             student.set_password('password123')
             student.full_name = "Nguyen Van A"
             student.role = 'student'
             student.save()
             self.stdout.write(self.style.SUCCESS('✅ Found/Updated Student: sinhvien1@test.com'))
         except User.DoesNotExist:
-            student = User.objects.create_user(username='sinhvien1@test.com', email='sinhvien1@test.com', password='password123')
-            student.full_name = "Nguyen Van A"
-            student.role = 'student'
+            student = User(email='sinhvien1@test.com', full_name="Nguyen Van A", role='student')
+            student.set_password('password123')
             student.save()
             self.stdout.write(self.style.SUCCESS('✅ Created Student: sinhvien1@test.com'))
 
         # 3. Class (Teacher is Admin)
-        admin = User.objects.get(username='admin@root.com')
         classroom, created = Classroom.objects.get_or_create(
             name='IELTS Intensity',
             defaults={
