@@ -173,15 +173,15 @@ class DeckInjector:
             max_card_id = target_cur.fetchone()[0] or 0
             
             # Import note types (models) - merge with existing
-            self._import_notetypes(source_cur, target_cur)
-            logger.info("Notetypes merged successfully")
+            model_id_map = self._import_notetypes(source_cur, target_cur)
+            logger.info(f"Notetypes merged: {model_id_map}")
             
             # Import decks - merge with existing
             deck_id_map = self._import_decks(source_cur, target_cur)
             logger.info(f"Decks merged: {deck_id_map}")
             
-            # Import notes with ID offset
-            note_id_map = self._import_notes(source_cur, target_cur, max_note_id)
+            # Import notes with ID offset and mapped model IDs
+            note_id_map = self._import_notes(source_cur, target_cur, max_note_id, model_id_map)
             logger.info(f"Notes imported: {len(note_id_map)}")
             
             # Import cards with ID offset and mapped note/deck IDs
@@ -210,8 +210,14 @@ class DeckInjector:
             source_conn.close()
             target_conn.close()
     
-    def _import_notetypes(self, source_cur, target_cur):
-        """Import note types (models) from source to target, merging duplicates."""
+    def _import_notetypes(self, source_cur, target_cur) -> Dict[int, int]:
+        """Import note types (models) from source to target, merging duplicates.
+        
+        CRITICAL: Each model must have usn=-1 to be synced to client.
+        Returns mapping of source model IDs to target model IDs.
+        """
+        model_id_map = {}
+        
         # Get existing models
         target_cur.execute("SELECT models FROM col")
         row = target_cur.fetchone()
@@ -228,21 +234,47 @@ class DeckInjector:
         else:
             source_models = {}
         
-        # Merge models (source overwrites target on conflict)
-        for model_id, model in source_models.items():
-            if model_id not in target_models:
-                target_models[model_id] = model
+        # Find max model ID in target
+        max_model_id = max([int(m) for m in target_models.keys()] + [0])
+        
+        # Merge models - check by name to avoid duplicates
+        for model_id_str, model in source_models.items():
+            model_id = int(model_id_str)
+            model_name = model.get('name', '')
+            
+            # Check if model with same name exists in target
+            existing_model_id = None
+            for tid, tm in target_models.items():
+                if tm.get('name') == model_name:
+                    existing_model_id = int(tid)
+                    break
+            
+            if existing_model_id:
+                # Use existing model
+                model_id_map[model_id] = existing_model_id
+            else:
+                # Add new model with usn=-1 to trigger sync
+                max_model_id = max(max_model_id, model_id) + 1
+                new_model_id = max_model_id
+                model['id'] = new_model_id
+                model['usn'] = -1  # CRITICAL: Ensure model syncs to client
+                target_models[str(new_model_id)] = model
+                model_id_map[model_id] = new_model_id
         
         # Update target
         target_cur.execute(
             "UPDATE col SET models = ?",
             (json.dumps(target_models),)
         )
+        
+        return model_id_map
     
     def _import_decks(self, source_cur, target_cur) -> Dict[int, int]:
         """
         Import decks from source to target.
         Returns mapping of source deck IDs to target deck IDs.
+        
+        CRITICAL: Each deck must have usn=-1 to be synced to client.
         """
         deck_id_map = {}
         
@@ -262,8 +294,9 @@ class DeckInjector:
         else:
             source_decks = {}
         
-        # Find max deck ID
-        max_deck_id = max([int(d) for d in target_decks.keys()] + [0])
+        # Find max deck ID - use timestamp-based ID to avoid conflicts
+        import time
+        max_deck_id = int(time.time() * 1000)
         
         for deck_id_str, deck in source_decks.items():
             deck_id = int(deck_id_str)
@@ -282,11 +315,14 @@ class DeckInjector:
             
             if existing_deck:
                 deck_id_map[deck_id] = existing_deck
+                # Update existing deck's usn to trigger sync
+                target_decks[str(existing_deck)]['usn'] = -1
             else:
                 # Create new deck with new ID
                 max_deck_id += 1
                 new_deck_id = max_deck_id
                 deck['id'] = new_deck_id
+                deck['usn'] = -1  # CRITICAL: Ensure deck syncs to client
                 target_decks[str(new_deck_id)] = deck
                 deck_id_map[deck_id] = new_deck_id
         
@@ -298,10 +334,12 @@ class DeckInjector:
         
         return deck_id_map
     
-    def _import_notes(self, source_cur, target_cur, id_offset: int) -> Dict[int, int]:
+    def _import_notes(self, source_cur, target_cur, id_offset: int, model_id_map: Dict[int, int]) -> Dict[int, int]:
         """
-        Import notes with ID offset.
+        Import notes with ID offset and mapped model IDs.
         Returns mapping of source note IDs to target note IDs.
+        
+        CRITICAL: Model IDs must be remapped to avoid "no such notetype" errors.
         """
         note_id_map = {}
         
@@ -310,7 +348,12 @@ class DeckInjector:
         
         for note in notes:
             old_id = note[0]
+            old_mid = note[2]
             new_id = old_id + id_offset + 1
+            
+            # Map model ID to target model ID
+            new_mid = model_id_map.get(old_mid, old_mid)
+            
             note_id_map[old_id] = new_id
             
             # Check if note with same guid already exists
@@ -321,11 +364,11 @@ class DeckInjector:
                 note_id_map[old_id] = existing[0]
                 continue
             
-            # Insert new note
+            # Insert new note with mapped model ID
             target_cur.execute(
                 """INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (new_id, note[1], note[2], note[3], -1, note[5], note[6], note[7], note[8], note[9], note[10])
+                (new_id, note[1], new_mid, note[3], -1, note[5], note[6], note[7], note[8], note[9], note[10])
             )
         
         return note_id_map
