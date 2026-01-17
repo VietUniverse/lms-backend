@@ -105,18 +105,21 @@ class AnkiAnalyticsService:
             from lms.models import Deck
             
             # Get list of ALL LMS deck titles to filter
-            # Note: We match by exact title. If student renamed deck, it won't sync.
+            # Note: Match both exact titles AND subdecks (e.g., 'Deck::Subdeck' matches 'Deck')
             lms_deck_titles = set(Deck.objects.values_list('title', flat=True))
             
             cursor.execute("SELECT decks FROM col LIMIT 1")
             decks_json = cursor.fetchone()[0]
             decks_data = json.loads(decks_json)
             # {did: {name: '...', ...}}
-            # Filter dids that match LMS titles
-            allowed_dids = {
-                int(did) for did, data in decks_data.items() 
-                if data['name'] in lms_deck_titles
-            }
+            # Filter dids that match LMS titles OR are subdecks of LMS titles
+            allowed_dids = set()
+            for did, data in decks_data.items():
+                name = data.get('name', '')
+                for lms_title in lms_deck_titles:
+                    if name == lms_title or name.startswith(lms_title + '::'):
+                        allowed_dids.add(int(did))
+                        break
             
             if not allowed_dids:
                 logger.info(f"No matching LMS decks found in Anki collection for {self.student.email}")
