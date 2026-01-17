@@ -104,6 +104,7 @@ class AnkiAnalyticsService:
             if new_entries:
                 AnkiRevlog.objects.bulk_create(new_entries, ignore_conflicts=True)
                 self._update_daily_stats(new_entries)
+                self._update_progress(new_entries, conn)
                 self._update_streak()
                 logger.info(f"Synced {len(new_entries)} revlog entries for {self.student.email}")
             
@@ -186,6 +187,75 @@ class AnkiAnalyticsService:
                 stats.retention_rate = 1 - (total_again / stats.cards_reviewed)
             
             stats.save()
+
+    def _update_progress(self, entries: list, conn: sqlite3.Connection):
+        """
+        Update Progress model for each deck.
+        Maps Anki cards -> Anki Decks -> LMS Decks.
+        """
+        import json
+        from lms.models import Deck, Progress
+
+        # 1. Get Deck Map (did -> name) from col table
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT decks FROM col LIMIT 1")
+            decks_json = cursor.fetchone()[0]
+            decks_data = json.loads(decks_json)
+            # Anki 2.1 schema: decks is a dict {did: {name: "...", ...}}
+            # Ensure keys are integers
+            deck_map = {int(k): v['name'] for k, v in decks_data.items()}
+        except Exception as e:
+            logger.error(f"Failed to read decks from Anki collection: {e}")
+            return
+
+        # 2. Get Card -> Deck Map for the entries
+        card_ids = list(set(e.card_id for e in entries))
+        if not card_ids:
+            return
+        
+        # Split into chunks to avoid too many SQL variables
+        card_deck_map = {}
+        chunk_size = 900
+        for i in range(0, len(card_ids), chunk_size):
+            chunk = card_ids[i:i + chunk_size]
+            placeholders = ','.join(['?'] * len(chunk))
+            cursor.execute(f"SELECT id, did FROM cards WHERE id IN ({placeholders})", chunk)
+            for cid, did in cursor.fetchall():
+                card_deck_map[cid] = did
+
+        # 3. Group by Deck Name
+        from collections import defaultdict
+        deck_updates = defaultdict(list) # deck_name -> [entry]
+        for entry in entries:
+            did = card_deck_map.get(entry.card_id)
+            if did and did in deck_map:
+                deck_name = deck_map[did]
+                deck_updates[deck_name].append(entry)
+
+        # 4. Find matching LMS Decks and Update Progress
+        for deck_name, deck_entries in deck_updates.items():
+            # Find LMS deck by title (approximate match)
+            lms_deck = Deck.objects.filter(title=deck_name).first()
+            if not lms_deck:
+                continue
+
+            progress, _ = Progress.objects.get_or_create(
+                student=self.student,
+                deck=lms_deck
+            )
+
+            # Update cards_learned based on Anki "queue" status (queue > 0 means learned/learning)
+            try:
+                anki_did = next(k for k, v in deck_map.items() if v == deck_name)
+                cursor.execute("SELECT count() FROM cards WHERE did = ? AND queue > 0", (anki_did,))
+                learned_count = cursor.fetchone()[0]
+                
+                progress.cards_learned = learned_count
+                progress.save()
+                logger.info(f"Updated progress for deck {deck_name}: {learned_count} cards learned")
+            except Exception as e:
+                logger.error(f"Error updating progress for deck {deck_name}: {e}")
     
     def _update_streak(self):
         """Update student's study streak based on today's activity."""
