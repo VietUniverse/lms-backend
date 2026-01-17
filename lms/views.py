@@ -1112,3 +1112,82 @@ def sync_pending_decks(request):
         "note": "Sync with Anki again to see the new decks"
     })
 
+
+# ============================================
+# STUDENT ANALYTICS ENDPOINTS
+# ============================================
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def student_stats(request):
+    """
+    GET /api/student/stats/
+    Return overview statistics for student dashboard.
+    Uses aggregated tables for optimal performance.
+    """
+    from .services.student_analytics import StudentAnalyticsService
+    
+    service = StudentAnalyticsService(request.user)
+    overview = service.get_overview_stats()
+    today = service.get_today_stats()
+    
+    return Response({
+        **overview,
+        "today": today
+    })
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def student_history(request):
+    """
+    GET /api/student/history/?days=30
+    Return study history for charts.
+    Dates are in ISO format (UTC) for frontend timezone conversion.
+    """
+    from .services.student_analytics import StudentAnalyticsService
+    
+    days = int(request.query_params.get('days', 30))
+    days = min(days, 365)  # Cap at 1 year
+    
+    service = StudentAnalyticsService(request.user)
+    history = service.get_study_history(days)
+    deck_progress = service.get_deck_progress()
+    
+    return Response({
+        "history": history,
+        "deck_progress": deck_progress
+    })
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def class_analytics(request, class_id):
+    """
+    GET /api/classes/{id}/analytics/
+    Return analytics for a class (teachers only).
+    """
+    from .services.student_analytics import TeacherAnalyticsService
+    
+    try:
+        classroom = Classroom.objects.get(pk=class_id)
+    except Classroom.DoesNotExist:
+        return Response({"error": "Class not found"}, status=404)
+    
+    # Check permission - only teacher or enrolled students can view
+    user = request.user
+    is_teacher = classroom.teacher == user
+    is_student = classroom.students.filter(pk=user.pk).exists()
+    
+    if not is_teacher and not is_student:
+        return Response({"error": "Permission denied"}, status=403)
+    
+    service = TeacherAnalyticsService(classroom)
+    overview = service.get_class_overview()
+    
+    # Only teachers can see individual student progress
+    if is_teacher:
+        students = service.get_student_progress_list()
+        overview["students"] = students
+    
+    return Response(overview)

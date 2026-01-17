@@ -32,10 +32,14 @@ def on_sync() -> None:
     
     try:
         # Step 1: Get assigned decks
+        print("[LMS] Starting sync...")
         mw.taskman.run_on_main(lambda: tooltip("Đang kiểm tra deck..."))
         server_decks = client.get_my_decks()
         
+        print(f"[LMS] Server returned {len(server_decks) if server_decks else 0} decks")
+        
         if not server_decks:
+            print("[LMS] No decks assigned")
             tooltip("Không có deck nào được giao.")
             _upload_progress(client)
             return
@@ -44,16 +48,23 @@ def on_sync() -> None:
         downloaded = 0
         for deck_info in server_decks:
             deck_id = deck_info["lms_deck_id"]
+            title = deck_info["title"]
             server_version = deck_info.get("version", 1)
-            local_version = config.get_deck_version(deck_id)
+            local_version = config.get_deck_version(deck_id)  # Use deck_id, not title
+            
+            print(f"[LMS] Deck {deck_id} '{title}': server_version={server_version}, local_version={local_version}")
             
             if server_version > local_version:
                 # Download new version
-                tooltip(f"Đang tải: {deck_info['title']}...")
-                success = _download_and_import(client, deck_id, deck_info["title"])
+                print(f"[LMS] Downloading deck {deck_id}...")
+                tooltip(f"Đang tải: {title}...")
+                success = _download_and_import(client, deck_id, title)
                 if success:
                     config.set_deck_version(deck_id, server_version)
                     downloaded += 1
+                    print(f"[LMS] Deck {deck_id} imported successfully, saved version={server_version}")
+            else:
+                print(f"[LMS] Deck {deck_id} already up to date, skipping")
         
         # Step 3: Upload progress
         synced = _upload_progress(client)

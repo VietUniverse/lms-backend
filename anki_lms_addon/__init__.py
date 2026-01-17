@@ -279,13 +279,24 @@ def show_settings():
 
 def do_lms_sync():
     """Trigger LMS sync from menu."""
-    if not ensure_logged_in():
-        # Auto-login failed, show manual login
-        show_login_dialog()
-        if not config.is_logged_in():
-            return
+    print("[LMS] Menu sync triggered")
     
-    sync_hook.on_sync()
+    try:
+        if not ensure_logged_in():
+            print("[LMS] Auto-login failed, showing login dialog")
+            # Auto-login failed, show manual login
+            show_login_dialog()
+            if not config.is_logged_in():
+                print("[LMS] Still not logged in after dialog")
+                return
+        
+        print("[LMS] Calling sync_hook.on_sync()")
+        sync_hook.on_sync()
+        print("[LMS] Sync completed")
+    except Exception as e:
+        import traceback
+        print(f"[LMS] Menu sync error: {traceback.format_exc()}")
+        showWarning(f"Lỗi đồng bộ: {e}")
 
 
 # ============================================

@@ -26,5 +26,10 @@ urlpatterns = [
     path("anki/sync-status/", views.anki_sync_status, name="anki-sync-status"),
     path("anki/sync-pending-decks/", views.sync_pending_decks, name="anki-sync-pending-decks"),
     
+    # Student Analytics Endpoints
+    path("student/stats/", views.student_stats, name="student-stats"),
+    path("student/history/", views.student_history, name="student-history"),
+    path("classes/<int:class_id>/analytics/", views.class_analytics, name="class-analytics"),
+    
     path("", include(router.urls)),
 ]
