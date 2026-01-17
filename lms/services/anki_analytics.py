@@ -129,7 +129,7 @@ class AnkiAnalyticsService:
                 FROM revlog
                 WHERE id > ?
                 ORDER BY id
-                LIMIT 10000
+                LIMIT 50000
             """, (last_synced,))
             
             rows = cursor.fetchall()
