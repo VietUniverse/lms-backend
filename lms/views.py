@@ -638,9 +638,11 @@ def anki_deck_download(request, deck_id):
     try:
         import tempfile
         import os
+        import logging
         from django.http import HttpResponse
         from django.conf import settings as django_settings
         
+        logger = logging.getLogger(__name__)
         file_id = deck.appwrite_file_id
         
         # Check if it's a local file (format: "local:filename.apkg")
@@ -652,6 +654,9 @@ def anki_deck_download(request, deck_id):
             if not os.path.exists(local_path):
                 return Response({"error": f"File không tồn tại: {filename}"}, status=status.HTTP_404_NOT_FOUND)
             
+            file_size = os.path.getsize(local_path)
+            logger.info(f"Serving local file: {local_path} ({file_size} bytes)")
+            
             with open(local_path, 'rb') as f:
                 file_content = f.read()
         else:
@@ -661,6 +666,9 @@ def anki_deck_download(request, deck_id):
             
             download_from_appwrite(file_id, tmp_path)
             
+            file_size = os.path.getsize(tmp_path)
+            logger.info(f"Downloaded from Appwrite: {tmp_path} ({file_size} bytes)")
+            
             # Read and stream response
             with open(tmp_path, 'rb') as f:
                 file_content = f.read()
@@ -668,15 +676,25 @@ def anki_deck_download(request, deck_id):
             # Cleanup temp file
             os.unlink(tmp_path)
         
-        # Stream response
+        # Verify file is valid APKG (starts with PK - ZIP signature)
+        if len(file_content) < 4 or file_content[:2] != b'PK':
+            logger.error(f"Invalid APKG file! Size: {len(file_content)}, Header: {file_content[:20]}")
+            return Response({"error": "File APKG không hợp lệ"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        logger.info(f"Sending deck {deck.title}: {len(file_content)} bytes")
+        
+        # Stream response with explicit Content-Length
         response = HttpResponse(file_content, content_type='application/octet-stream')
         response['Content-Disposition'] = f'attachment; filename="{deck.title}.apkg"'
+        response['Content-Length'] = str(len(file_content))
         # Add lms_deck_id header for addon to read
         response['X-LMS-Deck-ID'] = str(deck.id)
         response['X-LMS-Deck-Version'] = str(deck.version)
         return response
         
     except Exception as e:
+        import traceback
+        logging.error(f"Download error: {traceback.format_exc()}")
         return Response({"error": f"Lỗi download: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 

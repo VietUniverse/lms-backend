@@ -12,16 +12,43 @@ from django.conf import settings
 
 def download_from_appwrite(file_id: str, dest_path: str) -> None:
     """Download a file from Appwrite Storage to a local path."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     url = f"{settings.APPWRITE_ENDPOINT}/storage/buckets/{settings.APPWRITE_BUCKET_ID}/files/{file_id}/download"
     headers = {
         "X-Appwrite-Project": settings.APPWRITE_PROJECT_ID,
         "X-Appwrite-Key": settings.APPWRITE_API_KEY,
     }
-    response = requests.get(url, headers=headers, stream=True)
+    
+    logger.info(f"Downloading file {file_id} from Appwrite...")
+    
+    # Increase timeout for large files (35MB+)
+    response = requests.get(url, headers=headers, stream=True, timeout=300)
     response.raise_for_status()
+    
+    # Get expected file size from headers
+    expected_size = int(response.headers.get('Content-Length', 0))
+    logger.info(f"Expected file size: {expected_size} bytes ({expected_size / 1024 / 1024:.2f} MB)")
+    
+    # Download with larger chunk size for big files
+    chunk_size = 1024 * 1024  # 1MB chunks for faster download
+    bytes_downloaded = 0
+    
     with open(dest_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
+        for chunk in response.iter_content(chunk_size=chunk_size):
+            if chunk:
+                f.write(chunk)
+                bytes_downloaded += len(chunk)
+    
+    # Verify downloaded size
+    actual_size = os.path.getsize(dest_path)
+    logger.info(f"Downloaded: {actual_size} bytes ({actual_size / 1024 / 1024:.2f} MB)")
+    
+    if expected_size > 0 and actual_size != expected_size:
+        raise Exception(f"File size mismatch! Expected {expected_size}, got {actual_size}")
+    
+    logger.info(f"Download complete: {dest_path}")
 
 
 def parse_anki_file(apkg_path: str) -> list[dict]:

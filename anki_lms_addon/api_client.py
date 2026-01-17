@@ -35,10 +35,17 @@ class LMSClient:
     ) -> Any:
         """Make HTTP request to LMS API."""
         url = f"{self.base_url}{endpoint}"
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
+        
+        # Use different headers for binary file download vs JSON API
+        if raw_response:
+            headers = {
+                "Accept": "application/octet-stream",
+            }
+        else:
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
         
         if auth:
             token = config.get_access_token()
@@ -184,6 +191,18 @@ class LMSClient:
         
         lms_deck_id = int(headers.get("X-LMS-Deck-ID", deck_id))
         version = int(headers.get("X-LMS-Deck-Version", 1))
+        
+        # Log file size for debugging
+        content_length = headers.get("Content-Length", "unknown")
+        print(f"[LMS] Downloaded deck {deck_id}: {len(content)} bytes (server reported: {content_length})")
+        
+        # Verify we got binary data, not JSON error
+        if len(content) < 100:
+            try:
+                error_text = content.decode('utf-8')
+                print(f"[LMS] Warning: Received small response, might be error: {error_text[:200]}")
+            except:
+                pass
         
         return content, lms_deck_id, version
     

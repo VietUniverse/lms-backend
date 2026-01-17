@@ -82,18 +82,67 @@ def _download_and_import(client: LMSClient, deck_id: int, title: str) -> bool:
     try:
         content, lms_deck_id, version = client.download_deck(deck_id)
         
+        # Verify content is valid
+        if not content or len(content) < 100:
+            showWarning(f"Lỗi: File deck {title} rỗng hoặc quá nhỏ ({len(content) if content else 0} bytes)")
+            return False
+        
+        # Check for PK header (ZIP/APKG signature)
+        if content[:2] != b'PK':
+            showWarning(f"Lỗi: File deck {title} không phải định dạng APKG hợp lệ")
+            print(f"[LMS] Invalid file header: {content[:20]}")
+            return False
+        
+        print(f"[LMS] Deck {title}: Downloaded {len(content)} bytes, valid PK header")
+        
         # Save to temp file - Use delete=False and close immediately for Windows
         # Windows needs file to be closed before other processes can access it
         temp_dir = tempfile.gettempdir()
         temp_path = os.path.join(temp_dir, f"lms_deck_{deck_id}_{version}.apkg")
         
         with open(temp_path, 'wb') as f:
-            f.write(content)
-        # File is now closed and safe to use
+            bytes_written = f.write(content)
+        
+        # Verify file was written correctly
+        saved_size = os.path.getsize(temp_path)
+        if saved_size != len(content):
+            showWarning(f"Lỗi: File ghi không đầy đủ ({saved_size} vs {len(content)} bytes)")
+            return False
+        
+        print(f"[LMS] Saved to {temp_path}: {saved_size} bytes")
+        
+        # === VALIDATE APKG BEFORE IMPORT ===
+        # Open as ZIP and verify it contains required files
+        import zipfile
+        try:
+            with zipfile.ZipFile(temp_path, 'r') as zf:
+                file_list = zf.namelist()
+                print(f"[LMS] APKG contains: {file_list}")
+                
+                # Check for collection database
+                has_db = ('collection.anki2' in file_list or 
+                          'collection.anki21' in file_list)
+                
+                if not has_db:
+                    showWarning(f"Lỗi: File APKG không chứa database (có thể bị corrupt trong quá trình transfer).\n\nKích thước file: {saved_size} bytes\nFiles trong archive: {file_list}")
+                    return False
+                
+                # Verify ZIP integrity
+                bad_file = zf.testzip()
+                if bad_file:
+                    showWarning(f"Lỗi: File APKG bị corrupt! File lỗi: {bad_file}")
+                    return False
+                    
+                print(f"[LMS] APKG validation passed!")
+        except zipfile.BadZipFile as e:
+            showWarning(f"Lỗi: File không phải ZIP hợp lệ (có thể bị truncate trong quá trình download).\n\nKích thước: {saved_size} bytes\nLỗi: {e}")
+            return False
         
         # Import into Anki
         importer = AnkiPackageImporter(mw.col, temp_path)
         importer.run()
+        
+        print(f"[LMS] Import completed for {title}")
         
         # Try to extract LMS deck ID from deck description
         _register_imported_deck(title, lms_deck_id)
@@ -101,6 +150,8 @@ def _download_and_import(client: LMSClient, deck_id: int, title: str) -> bool:
         return True
         
     except Exception as e:
+        import traceback
+        print(f"[LMS] Import error: {traceback.format_exc()}")
         showWarning(f"Lỗi import deck {title}: {e}")
         return False
     finally:
