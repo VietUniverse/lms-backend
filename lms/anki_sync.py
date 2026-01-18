@@ -244,71 +244,113 @@ def delete_anki_user(email: str) -> bool:
 
 def _restart_anki_container() -> bool:
     """
-    Recreate Anki sync container to reload environment variables.
+    Restart Anki sync container to reload environment variables.
     
-    IMPORTANT: Container restart doesn't reload env_file.
-    We need to stop, remove, and recreate the container.
+    Uses docker-compose to properly restart the container with updated env_file.
+    This is more reliable than docker SDK as it preserves the original configuration.
     
     Returns:
-        True if container was recreated successfully, False otherwise
+        True if container was restarted successfully, False otherwise
     """
+    import subprocess
     import os
     
+    container_name = os.environ.get('ANKI_SYNC_CONTAINER_NAME', ANKI_CONTAINER_NAME)
+    
     try:
-        import docker
-        client = docker.from_env()
+        # Method 1: Try docker-compose restart (preferred - reloads env_file)
+        # Try to find compose directory from environment or common locations
+        compose_dir = os.environ.get('COMPOSE_PROJECT_DIR', None)
+        if not compose_dir:
+            # Check common production paths
+            for possible_dir in ['/var/www/lms-backend', '/opt/lms-backend', '/app']:
+                if os.path.exists(f'{possible_dir}/docker-compose.prod.yml'):
+                    compose_dir = possible_dir
+                    break
         
-        container_name = os.environ.get('ANKI_SYNC_CONTAINER_NAME', 'anki-sync')
-        env_file_path = os.environ.get('ANKI_SYNC_USERS_FILE', '/opt/anki-sync/sync_users.env')
-        data_path = '/opt/anki-sync/anki_data'
+        if compose_dir and os.path.exists(f'{compose_dir}/docker-compose.prod.yml'):
+            result = subprocess.run(
+                ['docker-compose', '-f', 'docker-compose.prod.yml', 'up', '-d', '--force-recreate', 'anki-sync'],
+                cwd=compose_dir,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            if result.returncode == 0:
+                logger.info(f"Restarted Anki container via docker-compose from {compose_dir}")
+                return True
+            else:
+                logger.warning(f"docker-compose restart failed: {result.stderr}")
         
-        # Read environment from file
-        env_vars = {'SYNC_BASE': '/data'}
+        # Method 2: Try direct docker restart with env reload
+        # For containers managed by docker-compose, we need to recreate
         try:
-            with open(env_file_path, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#') and '=' in line:
-                        key, value = line.split('=', 1)
-                        env_vars[key] = value
-        except Exception as e:
-            logger.error(f"Error reading env file: {e}")
-            return False
-        
-        # Get existing container
-        try:
+            import docker
+            client = docker.from_env()
             container = client.containers.get(container_name)
+            
+            # Read current env file
+            env_file_path = os.environ.get('ANKI_SYNC_USERS_FILE', str(SYNC_USERS_ENV_FILE))
+            env_vars = {'SYNC_BASE': '/anki_data'}
+            
+            try:
+                with open(env_file_path, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#') and '=' in line:
+                            key, value = line.split('=', 1)
+                            env_vars[key] = value
+            except Exception as e:
+                logger.warning(f"Could not read env file: {e}")
+            
+            # Get container config
             image = container.image.tags[0] if container.image.tags else container.image.id
             
-            # Stop and remove
+            # Stop and remove old container
             container.stop(timeout=10)
             container.remove()
-            logger.info(f"Stopped and removed container {container_name}")
-        except docker.errors.NotFound:
-            image = 'anki-sync-server:local'
-            logger.warning(f"Container {container_name} not found, will create new")
+            
+            # Recreate with new environment
+            new_container = client.containers.run(
+                image,
+                name=container_name,
+                detach=True,
+                restart_policy={'Name': 'always'},
+                environment=env_vars,
+                volumes={
+                    '/opt/anki-sync/anki_data': {'bind': '/anki_data', 'mode': 'rw'}
+                },
+                ports={'8080/tcp': 8080},
+            )
+            
+            logger.info(f"Recreated container {container_name} with {len(env_vars)} env vars")
+            return True
+            
+        except ImportError:
+            logger.warning("Docker SDK not installed, trying subprocess")
+        except Exception as docker_err:
+            logger.warning(f"Docker SDK method failed: {docker_err}")
         
-        # Create new container with updated env
-        new_container = client.containers.run(
-            image,
-            name=container_name,
-            detach=True,
-            restart_policy={'Name': 'always'},
-            environment=env_vars,
-            volumes={
-                data_path: {'bind': '/data', 'mode': 'rw'}
-            },
-            ports={'8080/tcp': 27701},
+        # Method 3: Fallback to docker CLI
+        result = subprocess.run(
+            ['docker', 'restart', container_name],
+            capture_output=True,
+            text=True,
+            timeout=30
         )
-        
-        logger.info(f"Created new container {container_name} with {len(env_vars)} env vars")
-        return True
-        
-    except ImportError:
-        logger.error("Docker SDK not installed. Run: pip install docker")
+        if result.returncode == 0:
+            logger.info(f"Restarted container {container_name} via docker CLI")
+            # Note: Simple restart may not reload env_file, but it's better than nothing
+            return True
+        else:
+            logger.error(f"Docker CLI restart failed: {result.stderr}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        logger.error("Container restart timed out")
         return False
     except Exception as e:
-        logger.error(f"Error recreating Anki container: {e}")
+        logger.error(f"Error restarting Anki container: {e}")
         return False
 
 

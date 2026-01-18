@@ -44,7 +44,7 @@ services:
 
   # 4. Anki Sync Server (Official Rust version - compatible with Anki 24/25)
   anki-sync:
-    image: yangchuansheng/anki-sync-server:latest
+    image: yangchuansheng/anki-sync-server:latestrew  `
     container_name: ankilms_anki
     env_file:
       - ./sync_users.env  # Dynamic user list (SYNC_USER1=email:password)
