@@ -6,6 +6,7 @@ User = get_user_model()
 class SignUpSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     confirm_password = serializers.CharField(write_only=True)
+    role = serializers.CharField(default='student', required=False)
 
     class Meta:
         model = User
@@ -21,7 +22,7 @@ class SignUpSerializer(serializers.ModelSerializer):
         user = User(
             full_name=validated_data["full_name"],
             email=validated_data["email"],
-            role=validated_data["role"],
+            role=validated_data.get("role", "student"),
             username=validated_data["email"],
         )
         user.set_password(validated_data["password"])

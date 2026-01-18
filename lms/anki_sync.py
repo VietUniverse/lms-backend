@@ -246,23 +246,79 @@ def _restart_anki_container() -> bool:
     """
     Restart Anki sync container to reload environment variables.
     
-    Uses docker-compose to properly restart the container with updated env_file.
-    This is more reliable than docker SDK as it preserves the original configuration.
+    Prioritizes Docker SDK since docker CLI may not be available in container.
+    Falls back to subprocess commands if SDK fails.
     
     Returns:
         True if container was restarted successfully, False otherwise
     """
-    import subprocess
     import os
     
     container_name = os.environ.get('ANKI_SYNC_CONTAINER_NAME', ANKI_CONTAINER_NAME)
+    env_file_path = os.environ.get('ANKI_SYNC_USERS_FILE', str(SYNC_USERS_ENV_FILE))
     
+    # Method 1: Try Docker SDK (preferred - works inside container)
     try:
-        # Method 1: Try docker-compose restart (preferred - reloads env_file)
-        # Try to find compose directory from environment or common locations
+        import docker
+        client = docker.from_env()
+        container = client.containers.get(container_name)
+        
+        # Read current env file
+        env_vars = {'SYNC_BASE': '/data'}
+        try:
+            with open(env_file_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        env_vars[key] = value
+        except Exception as e:
+            logger.warning(f"Could not read env file: {e}")
+        
+        # Get container config
+        image = container.image.tags[0] if container.image.tags else container.image.id
+        
+        # Get volumes from existing container
+        mounts = container.attrs.get('Mounts', [])
+        volumes = {}
+        for mount in mounts:
+            if mount['Type'] == 'volume':
+                volumes[mount['Name']] = {'bind': mount['Destination'], 'mode': 'rw'}
+            elif mount['Type'] == 'bind':
+                volumes[mount['Source']] = {'bind': mount['Destination'], 'mode': mount.get('Mode', 'rw')}
+        
+        # Get ports
+        ports = container.attrs.get('HostConfig', {}).get('PortBindings', {})
+        
+        # Stop and remove old container
+        container.stop(timeout=10)
+        container.remove()
+        
+        # Recreate with new environment
+        new_container = client.containers.run(
+            image,
+            name=container_name,
+            detach=True,
+            restart_policy={'Name': 'always'},
+            environment=env_vars,
+            volumes=volumes if volumes else {'/var/lib/docker/volumes/lms-backend_anki_data/_data': {'bind': '/data', 'mode': 'rw'}},
+            ports={'8080/tcp': 8080},
+        )
+        
+        logger.info(f"Recreated container {container_name} via Docker SDK with {len(env_vars)} env vars")
+        return True
+        
+    except ImportError:
+        logger.warning("Docker SDK not installed")
+    except Exception as docker_err:
+        logger.warning(f"Docker SDK method failed: {docker_err}")
+    
+    # Method 2: Try subprocess docker compose (for systems with docker CLI)
+    try:
+        import subprocess
+        
         compose_dir = os.environ.get('COMPOSE_PROJECT_DIR', None)
         if not compose_dir:
-            # Check common production paths
             for possible_dir in ['/var/www/lms-backend', '/opt/lms-backend', '/app']:
                 if os.path.exists(f'{possible_dir}/docker-compose.prod.yml'):
                     compose_dir = possible_dir
@@ -270,68 +326,19 @@ def _restart_anki_container() -> bool:
         
         if compose_dir and os.path.exists(f'{compose_dir}/docker-compose.prod.yml'):
             result = subprocess.run(
-                ['docker-compose', '-f', 'docker-compose.prod.yml', 'up', '-d', '--force-recreate', 'anki-sync'],
+                ['docker', 'compose', '-f', 'docker-compose.prod.yml', 'up', '-d', '--force-recreate', 'anki-sync'],
                 cwd=compose_dir,
                 capture_output=True,
                 text=True,
                 timeout=60
             )
             if result.returncode == 0:
-                logger.info(f"Restarted Anki container via docker-compose from {compose_dir}")
+                logger.info(f"Restarted Anki container via docker compose from {compose_dir}")
                 return True
             else:
-                logger.warning(f"docker-compose restart failed: {result.stderr}")
+                logger.warning(f"docker compose restart failed: {result.stderr}")
         
-        # Method 2: Try direct docker restart with env reload
-        # For containers managed by docker-compose, we need to recreate
-        try:
-            import docker
-            client = docker.from_env()
-            container = client.containers.get(container_name)
-            
-            # Read current env file
-            env_file_path = os.environ.get('ANKI_SYNC_USERS_FILE', str(SYNC_USERS_ENV_FILE))
-            env_vars = {'SYNC_BASE': '/anki_data'}
-            
-            try:
-                with open(env_file_path, 'r') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith('#') and '=' in line:
-                            key, value = line.split('=', 1)
-                            env_vars[key] = value
-            except Exception as e:
-                logger.warning(f"Could not read env file: {e}")
-            
-            # Get container config
-            image = container.image.tags[0] if container.image.tags else container.image.id
-            
-            # Stop and remove old container
-            container.stop(timeout=10)
-            container.remove()
-            
-            # Recreate with new environment
-            new_container = client.containers.run(
-                image,
-                name=container_name,
-                detach=True,
-                restart_policy={'Name': 'always'},
-                environment=env_vars,
-                volumes={
-                    '/opt/anki-sync/anki_data': {'bind': '/anki_data', 'mode': 'rw'}
-                },
-                ports={'8080/tcp': 8080},
-            )
-            
-            logger.info(f"Recreated container {container_name} with {len(env_vars)} env vars")
-            return True
-            
-        except ImportError:
-            logger.warning("Docker SDK not installed, trying subprocess")
-        except Exception as docker_err:
-            logger.warning(f"Docker SDK method failed: {docker_err}")
-        
-        # Method 3: Fallback to docker CLI
+        # Try simple docker restart
         result = subprocess.run(
             ['docker', 'restart', container_name],
             capture_output=True,
@@ -340,7 +347,6 @@ def _restart_anki_container() -> bool:
         )
         if result.returncode == 0:
             logger.info(f"Restarted container {container_name} via docker CLI")
-            # Note: Simple restart may not reload env_file, but it's better than nothing
             return True
         else:
             logger.error(f"Docker CLI restart failed: {result.stderr}")
