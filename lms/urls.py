@@ -8,6 +8,7 @@ router.register(r"decks", views.DeckViewSet, basename="deck")
 router.register(r"tests", views.TestViewSet, basename="test")
 router.register(r"progress", views.ProgressViewSet, basename="progress")
 router.register(r"tickets", views.SupportTicketViewSet, basename="ticket")
+router.register(r"events", views.EventViewSet, basename="event")  # Phase 2
 
 urlpatterns = [
     path("", views.index),
@@ -16,6 +17,9 @@ urlpatterns = [
     # Gamification Endpoints (Phase 1)
     path("gamification/stats/", views.gamification_stats, name="gamification-stats"),
     path("gamification/buy-shield/", views.buy_shield, name="buy-shield"),
+    
+    # Leaderboard (Phase 2)
+    path("leaderboard/", views.global_leaderboard, name="leaderboard"),
     
     # Anki Addon Integration Endpoints
     path("anki/my-decks/", views.anki_my_decks, name="anki-my-decks"),
@@ -37,4 +41,3 @@ urlpatterns = [
     
     path("", include(router.urls)),
 ]
-

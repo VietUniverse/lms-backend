@@ -1402,3 +1402,191 @@ def class_analytics(request, class_id):
         overview["students"] = students
     
     return Response(overview)
+
+
+# ============================================
+# EVENTS API (Phase 2)
+# ============================================
+
+from .models import Event, EventParticipant
+from .serializers import EventSerializer, EventParticipantSerializer
+
+
+class EventViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for Events.
+    Teachers can CRUD events.
+    Students can list, join, and view progress.
+    """
+    serializer_class = EventSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        from django.utils import timezone
+        from django.db.models import Q
+        
+        now = timezone.now()
+        
+        if user.role == "teacher":
+            # Teachers see events they created
+            return Event.objects.filter(creator=user)
+        
+        # Students see global events + events from enrolled classes
+        enrolled_class_ids = Classroom.objects.filter(
+            students=user
+        ).values_list('id', flat=True)
+        
+        return Event.objects.filter(
+            is_active=True,
+            start_date__lte=now,
+            end_date__gte=now
+        ).filter(
+            Q(classroom__isnull=True) | Q(classroom_id__in=enrolled_class_ids)
+        ).distinct()
+    
+    def perform_create(self, serializer):
+        serializer.save(creator=self.request.user)
+    
+    @action(detail=True, methods=["post"], url_path="join")
+    def join_event(self, request, pk=None):
+        """Student joins an event."""
+        from .services.event_service import EventService
+        
+        event = self.get_object()
+        user = request.user
+        
+        # Check if already joined
+        if EventParticipant.objects.filter(event=event, user=user).exists():
+            return Response({"error": "Bạn đã tham gia event này rồi"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if event is ongoing
+        if not event.is_ongoing:
+            return Response({"error": "Event không còn hiệu lực"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Join event
+        service = EventService(user)
+        participation = service.join_event(event)
+        
+        return Response({
+            "message": f"Đã tham gia event: {event.title}",
+            "participation": EventParticipantSerializer(participation).data
+        }, status=status.HTTP_201_CREATED)
+    
+    @action(detail=True, methods=["get"], url_path="my-progress")
+    def my_progress(self, request, pk=None):
+        """Get user's progress in this event."""
+        event = self.get_object()
+        user = request.user
+        
+        try:
+            participation = EventParticipant.objects.get(event=event, user=user)
+            return Response(EventParticipantSerializer(participation).data)
+        except EventParticipant.DoesNotExist:
+            return Response({"error": "Bạn chưa tham gia event này"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=["post"], url_path="claim-reward")
+    def claim_reward(self, request, pk=None):
+        """Claim reward after completing event."""
+        event = self.get_object()
+        user = request.user
+        
+        try:
+            participation = EventParticipant.objects.get(event=event, user=user)
+        except EventParticipant.DoesNotExist:
+            return Response({"error": "Bạn chưa tham gia event này"}, status=status.HTTP_404_NOT_FOUND)
+        
+        if not participation.completed:
+            return Response({"error": "Bạn chưa hoàn thành event này"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if participation.rewarded:
+            return Response({"error": "Bạn đã nhận thưởng rồi"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Claim reward
+        participation.claim_reward()
+        
+        return Response({
+            "message": f"Đã nhận thưởng: +{event.reward_xp} XP, +{event.reward_coins} Coin",
+            "new_xp": user.xp,
+            "new_coin_balance": user.coin_balance
+        })
+    
+    @action(detail=False, methods=["get"], url_path="my-events")
+    def my_events(self, request):
+        """Get all events the user has joined."""
+        participations = EventParticipant.objects.filter(
+            user=request.user
+        ).select_related('event').order_by('-joined_at')
+        
+        return Response(EventParticipantSerializer(participations, many=True).data)
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def global_leaderboard(request):
+    """
+    Get global leaderboard using Window Function for ranking.
+    Query params: metric=xp|cards|streak (default: xp), limit=10
+    """
+    from django.db.models import Sum, Window, F
+    from django.db.models.functions import RowNumber
+    from .models import DailyStudyStats, StudentStreak
+    
+    metric = request.query_params.get("metric", "xp")
+    limit = min(int(request.query_params.get("limit", 20)), 100)
+    
+    # Get students only
+    students = User.objects.filter(role="student")
+    
+    if metric == "xp":
+        # Rank by XP with Window Function
+        ranked = students.filter(xp__gt=0).annotate(
+            rank=Window(
+                expression=RowNumber(),
+                order_by=F('xp').desc()
+            )
+        ).order_by('rank')[:limit]
+        
+        return Response([{
+            "rank": s.rank,
+            "user_id": s.id,
+            "full_name": s.full_name or s.email.split('@')[0],
+            "email": s.email,
+            "xp": s.xp,
+            "level": s.level
+        } for s in ranked])
+    
+    elif metric == "cards":
+        # Aggregate cards from DailyStudyStats
+        cards_data = DailyStudyStats.objects.values('student').annotate(
+            total_cards=Sum('cards_learned')
+        ).filter(total_cards__gt=0).order_by('-total_cards')[:limit]
+        
+        result = []
+        for i, entry in enumerate(cards_data, 1):
+            user = User.objects.get(pk=entry['student'])
+            result.append({
+                "rank": i,
+                "user_id": user.id,
+                "full_name": user.full_name or user.email.split('@')[0],
+                "email": user.email,
+                "cards_learned": entry['total_cards'],
+                "level": user.level
+            })
+        return Response(result)
+    
+    elif metric == "streak":
+        streaks = StudentStreak.objects.filter(
+            current_streak__gt=0
+        ).select_related('student').order_by('-current_streak')[:limit]
+        
+        return Response([{
+            "rank": i + 1,
+            "user_id": s.student.id,
+            "full_name": s.student.full_name or s.student.email.split('@')[0],
+            "email": s.student.email,
+            "current_streak": s.current_streak,
+            "level": s.student.level
+        } for i, s in enumerate(streaks)])
+    
+    return Response({"error": "Invalid metric"}, status=status.HTTP_400_BAD_REQUEST)

@@ -193,3 +193,65 @@ class AnkiProgressSerializer(serializers.Serializer):
             raise serializers.ValidationError("Deck không tồn tại.")
         return value
 
+
+# ============================================
+# EVENTS SERIALIZERS (Phase 2)
+# ============================================
+
+from .models import Event, EventParticipant
+
+
+class EventSerializer(serializers.ModelSerializer):
+    """Serializer for Event (read/write for teachers)."""
+    creator_name = serializers.CharField(source='creator.full_name', read_only=True)
+    classroom_name = serializers.CharField(source='classroom.name', read_only=True, allow_null=True)
+    participant_count = serializers.IntegerField(read_only=True)
+    is_ongoing = serializers.BooleanField(read_only=True)
+    
+    class Meta:
+        model = Event
+        fields = [
+            "id", "title", "description", "classroom", "classroom_name",
+            "creator", "creator_name", "target_type", "target_value",
+            "reward_xp", "reward_coins", "start_date", "end_date",
+            "is_active", "participant_count", "is_ongoing", "created_at"
+        ]
+        read_only_fields = ["id", "creator", "created_at"]
+
+
+class EventParticipantSerializer(serializers.ModelSerializer):
+    """Serializer for event participation with progress."""
+    event_title = serializers.CharField(source='event.title', read_only=True)
+    event_target_type = serializers.CharField(source='event.target_type', read_only=True)
+    event_target_value = serializers.IntegerField(source='event.target_value', read_only=True)
+    event_reward_xp = serializers.IntegerField(source='event.reward_xp', read_only=True)
+    event_reward_coins = serializers.IntegerField(source='event.reward_coins', read_only=True)
+    event_end_date = serializers.DateTimeField(source='event.end_date', read_only=True)
+    percentage = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = EventParticipant
+        fields = [
+            "id", "event", "event_title", "event_target_type", "event_target_value",
+            "event_reward_xp", "event_reward_coins", "event_end_date",
+            "progress", "percentage", "completed", "completed_at", "rewarded", "joined_at"
+        ]
+        read_only_fields = fields
+    
+    def get_percentage(self, obj):
+        if obj.event.target_value <= 0:
+            return 100
+        return min(100, round(obj.progress / obj.event.target_value * 100, 1))
+
+
+class LeaderboardEntrySerializer(serializers.Serializer):
+    """Serializer for leaderboard entries."""
+    rank = serializers.IntegerField()
+    user_id = serializers.IntegerField()
+    full_name = serializers.CharField()
+    email = serializers.CharField()
+    xp = serializers.IntegerField()
+    level = serializers.IntegerField()
+    cards_learned = serializers.IntegerField(required=False)
+    current_streak = serializers.IntegerField(required=False)
+    study_time_hours = serializers.FloatField(required=False)

@@ -186,6 +186,10 @@ class AnkiAnalyticsService:
                 # Yes, we pass 'new_entries' which are already filtered.
                 self._update_progress(new_entries, conn)
                 self._update_streak()
+                
+                # Phase 2: Update event progress after sync
+                self._update_event_progress()
+                
                 logger.info(f"Synced {len(new_entries)} revlog entries for {self.student.email}")
             
             conn.close()
@@ -198,6 +202,17 @@ class AnkiAnalyticsService:
         except Exception as e:
             logger.error(f"Error syncing revlog for {self.student.email}: {e}")
             return 0
+    
+    def _update_event_progress(self):
+        """Update progress for all active events the user has joined."""
+        try:
+            from lms.services.event_service import EventService
+            event_service = EventService(self.student)
+            completed_events = event_service.update_all_event_progress()
+            if completed_events:
+                logger.info(f"User {self.student.email} completed {len(completed_events)} events")
+        except Exception as e:
+            logger.error(f"Error updating event progress: {e}")
     
     def _update_daily_stats(self, entries: list):
         """

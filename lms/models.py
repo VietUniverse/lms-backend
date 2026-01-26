@@ -544,3 +544,132 @@ class DailyStudyStats(models.Model):
 
     def __str__(self):
         return f"{self.student.email} - {self.date} - {self.cards_reviewed} cards"
+
+
+# ============================================
+# EVENTS SYSTEM (Phase 2)
+# ============================================
+
+class Event(models.Model):
+    """
+    Events với mục tiêu và phần thưởng.
+    Có thể là class-specific hoặc global.
+    """
+    TARGET_TYPES = [
+        ("CARDS", "Số thẻ học"),
+        ("TIME", "Thời gian học (phút)"),
+        ("STREAK", "Streak liên tục (ngày)"),
+        ("XP", "Điểm XP"),
+    ]
+    
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    classroom = models.ForeignKey(
+        'Classroom',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="events",
+        help_text="Null = Global event"
+    )
+    creator = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="created_events"
+    )
+    target_type = models.CharField(max_length=20, choices=TARGET_TYPES)
+    target_value = models.IntegerField(help_text="Mục tiêu cần đạt")
+    reward_xp = models.IntegerField(default=0)
+    reward_coins = models.IntegerField(default=0)
+    start_date = models.DateTimeField()
+    end_date = models.DateTimeField()
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-start_date']
+        indexes = [
+            models.Index(fields=['is_active', '-start_date']),
+            models.Index(fields=['classroom', 'is_active']),
+        ]
+    
+    def __str__(self):
+        scope = self.classroom.name if self.classroom else "Global"
+        return f"{self.title} ({scope})"
+    
+    @property
+    def is_ongoing(self):
+        from django.utils import timezone
+        now = timezone.now()
+        return self.is_active and self.start_date <= now <= self.end_date
+    
+    @property
+    def participant_count(self):
+        return self.participants.count()
+
+
+class EventParticipant(models.Model):
+    """
+    Tracking participation và progress của user trong event.
+    """
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.CASCADE,
+        related_name="participants"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="event_participations"
+    )
+    progress = models.IntegerField(default=0, help_text="Current progress towards target")
+    baseline = models.IntegerField(default=0, help_text="Starting value when joined")
+    completed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    rewarded = models.BooleanField(default=False)
+    joined_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ('event', 'user')
+        ordering = ['-progress']
+    
+    def __str__(self):
+        status = "✓" if self.completed else f"{self.progress}/{self.event.target_value}"
+        return f"{self.user.email} - {self.event.title}: {status}"
+    
+    def update_progress(self, current_value: int) -> bool:
+        """
+        Update progress based on current value minus baseline.
+        Returns True if just completed.
+        """
+        self.progress = max(0, current_value - self.baseline)
+        
+        # Check completion
+        just_completed = False
+        if not self.completed and self.progress >= self.event.target_value:
+            from django.utils import timezone
+            self.completed = True
+            self.completed_at = timezone.now()
+            just_completed = True
+        
+        self.save()
+        return just_completed
+    
+    def claim_reward(self) -> bool:
+        """
+        Claim reward if completed and not yet rewarded.
+        Returns True if claimed successfully.
+        """
+        if not self.completed or self.rewarded:
+            return False
+        
+        # Award XP and Coins
+        if self.event.reward_xp > 0:
+            self.user.add_xp(self.event.reward_xp)
+        if self.event.reward_coins > 0:
+            self.user.add_coins(self.event.reward_coins, f"Event: {self.event.title}")
+        
+        self.rewarded = True
+        self.save()
+        return True
+
