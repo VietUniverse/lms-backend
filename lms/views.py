@@ -650,6 +650,65 @@ class DeckViewSet(viewsets.ModelViewSet):
         if response.status_code >= 400:
              print(f"Appwrite delete error: {response.text}")
 
+    @action(detail=True, methods=["get"], url_path="cards")
+    def get_cards(self, request, pk=None):
+        """Get all cards in a deck."""
+        deck = self.get_object()
+        cards = Card.objects.filter(deck=deck).order_by('id')
+        
+        result = []
+        for card in cards:
+            result.append({
+                "id": card.id,
+                "front": card.front,
+                "back": card.back,
+                "created_at": card.created_at.isoformat() if hasattr(card, 'created_at') and card.created_at else None
+            })
+        
+        return Response(result)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([permissions.IsAuthenticated])
+def deck_card_detail(request, deck_id, card_id):
+    """
+    PATCH /api/decks/{deck_id}/cards/{card_id}/ - Update card
+    DELETE /api/decks/{deck_id}/cards/{card_id}/ - Delete card
+    """
+    try:
+        deck = Deck.objects.get(pk=deck_id, teacher=request.user)
+    except Deck.DoesNotExist:
+        return Response({"error": "Deck not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    try:
+        card = Card.objects.get(pk=card_id, deck=deck)
+    except Card.DoesNotExist:
+        return Response({"error": "Card not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    if request.method == "PATCH":
+        front = request.data.get("front")
+        back = request.data.get("back")
+        
+        if front is not None:
+            card.front = front
+        if back is not None:
+            card.back = back
+        
+        card.save()
+        return Response({
+            "id": card.id,
+            "front": card.front,
+            "back": card.back,
+            "message": "Card updated"
+        })
+    
+    elif request.method == "DELETE":
+        card.delete()
+        # Update card count
+        deck.card_count = Card.objects.filter(deck=deck).count()
+        deck.save()
+        return Response({"message": "Card deleted"})
+
 
 class TestViewSet(viewsets.ModelViewSet):
     """API endpoint cho Test (bài kiểm tra)."""

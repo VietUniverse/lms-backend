@@ -44,5 +44,8 @@ urlpatterns = [
     path("achievements/my/", views.my_achievements, name="my-achievements"),
     path("achievements/<int:achievement_id>/claim/", views.claim_achievement_reward, name="claim-achievement"),
     
+    # Deck Card Management
+    path("decks/<int:deck_id>/cards/<int:card_id>/", views.deck_card_detail, name="deck-card-detail"),
+    
     path("", include(router.urls)),
 ]
