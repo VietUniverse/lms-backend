@@ -673,3 +673,90 @@ class EventParticipant(models.Model):
         self.save()
         return True
 
+
+# ============================================
+# ACHIEVEMENTS SYSTEM
+# ============================================
+
+class Achievement(models.Model):
+    """
+    Achievement definitions.
+    Unlock conditions are checked by AchievementService.
+    """
+    ACHIEVEMENT_TYPES = [
+        ('STREAK', 'Streak liên tục'),
+        ('CARDS', 'Số thẻ học'),
+        ('XP', 'Điểm XP'),
+        ('TIME', 'Thời gian học'),
+        ('LEVEL', 'Level đạt được'),
+        ('SPECIAL', 'Đặc biệt'),
+    ]
+    
+    RARITY_CHOICES = [
+        ('COMMON', 'Thường'),
+        ('RARE', 'Hiếm'),
+        ('EPIC', 'Sử thi'),
+        ('LEGENDARY', 'Huyền thoại'),
+    ]
+    
+    code = models.CharField(max_length=50, unique=True)  # e.g., 'streak_7', 'cards_100'
+    name = models.CharField(max_length=100)
+    description = models.TextField()
+    icon = models.CharField(max_length=10, default='🏆')  # Emoji or icon name
+    
+    achievement_type = models.CharField(max_length=20, choices=ACHIEVEMENT_TYPES)
+    target_value = models.IntegerField(default=1)  # Value needed to unlock
+    
+    rarity = models.CharField(max_length=20, choices=RARITY_CHOICES, default='COMMON')
+    reward_xp = models.IntegerField(default=0)
+    reward_coins = models.IntegerField(default=0)
+    
+    sort_order = models.IntegerField(default=0)
+    is_hidden = models.BooleanField(default=False)  # Hidden until unlocked
+    is_active = models.BooleanField(default=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['sort_order', 'achievement_type', 'target_value']
+    
+    def __str__(self):
+        return f"{self.icon} {self.name}"
+
+
+class UserAchievement(models.Model):
+    """User's unlocked achievements."""
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='achievements'
+    )
+    achievement = models.ForeignKey(
+        Achievement,
+        on_delete=models.CASCADE,
+        related_name='user_unlocks'
+    )
+    
+    unlocked_at = models.DateTimeField(auto_now_add=True)
+    rewarded = models.BooleanField(default=False)
+    
+    # Progress tracking (for achievements with multiple tiers)
+    progress = models.IntegerField(default=0)
+    
+    class Meta:
+        unique_together = ['user', 'achievement']
+        ordering = ['-unlocked_at']
+    
+    def claim_reward(self):
+        """Claim XP and Coin reward."""
+        if self.rewarded:
+            return False
+        
+        if self.achievement.reward_xp > 0:
+            self.user.add_xp(self.achievement.reward_xp)
+        if self.achievement.reward_coins > 0:
+            self.user.add_coins(self.achievement.reward_coins, f"Achievement: {self.achievement.name}")
+        
+        self.rewarded = True
+        self.save()
+        return True

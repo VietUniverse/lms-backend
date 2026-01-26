@@ -255,3 +255,60 @@ class LeaderboardEntrySerializer(serializers.Serializer):
     cards_learned = serializers.IntegerField(required=False)
     current_streak = serializers.IntegerField(required=False)
     study_time_hours = serializers.FloatField(required=False)
+
+
+# ============================================
+# ACHIEVEMENTS SERIALIZERS
+# ============================================
+from .models import Achievement, UserAchievement
+
+
+class AchievementSerializer(serializers.ModelSerializer):
+    """Serializer for Achievement definitions."""
+    unlocked = serializers.SerializerMethodField()
+    user_progress = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Achievement
+        fields = [
+            "id", "code", "name", "description", "icon",
+            "achievement_type", "target_value", "rarity",
+            "reward_xp", "reward_coins", "is_hidden",
+            "unlocked", "user_progress"
+        ]
+    
+    def get_unlocked(self, obj):
+        user = self.context.get('request')
+        if user and hasattr(user, 'user'):
+            return UserAchievement.objects.filter(user=user.user, achievement=obj).exists()
+        return False
+    
+    def get_user_progress(self, obj):
+        user = self.context.get('request')
+        if user and hasattr(user, 'user'):
+            ua = UserAchievement.objects.filter(user=user.user, achievement=obj).first()
+            if ua:
+                return ua.progress
+        return 0
+
+
+class UserAchievementSerializer(serializers.ModelSerializer):
+    """Serializer for user's unlocked achievements."""
+    achievement_code = serializers.CharField(source='achievement.code', read_only=True)
+    achievement_name = serializers.CharField(source='achievement.name', read_only=True)
+    achievement_description = serializers.CharField(source='achievement.description', read_only=True)
+    achievement_icon = serializers.CharField(source='achievement.icon', read_only=True)
+    achievement_rarity = serializers.CharField(source='achievement.rarity', read_only=True)
+    achievement_type = serializers.CharField(source='achievement.achievement_type', read_only=True)
+    reward_xp = serializers.IntegerField(source='achievement.reward_xp', read_only=True)
+    reward_coins = serializers.IntegerField(source='achievement.reward_coins', read_only=True)
+    
+    class Meta:
+        model = UserAchievement
+        fields = [
+            "id", "achievement", "achievement_code", "achievement_name",
+            "achievement_description", "achievement_icon", "achievement_rarity",
+            "achievement_type", "reward_xp", "reward_coins",
+            "progress", "unlocked_at", "rewarded"
+        ]
+        read_only_fields = fields

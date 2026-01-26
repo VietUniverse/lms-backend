@@ -1590,3 +1590,91 @@ def global_leaderboard(request):
         } for i, s in enumerate(streaks)])
     
     return Response({"error": "Invalid metric"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# ============================================
+# ACHIEVEMENTS API
+# ============================================
+from .models import Achievement, UserAchievement
+from .serializers import AchievementSerializer, UserAchievementSerializer
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def achievements_list(request):
+    """
+    Get all achievements with user's unlock status.
+    GET /api/achievements/
+    """
+    achievements = Achievement.objects.filter(is_active=True)
+    user = request.user
+    
+    # Get user's unlocked achievement IDs
+    unlocked_ids = set(
+        UserAchievement.objects.filter(user=user).values_list('achievement_id', flat=True)
+    )
+    
+    result = []
+    for ach in achievements:
+        # Hide hidden achievements unless unlocked
+        if ach.is_hidden and ach.id not in unlocked_ids:
+            continue
+        
+        user_ach = UserAchievement.objects.filter(user=user, achievement=ach).first()
+        
+        result.append({
+            "id": ach.id,
+            "code": ach.code,
+            "name": ach.name,
+            "description": ach.description,
+            "icon": ach.icon,
+            "achievement_type": ach.achievement_type,
+            "target_value": ach.target_value,
+            "rarity": ach.rarity,
+            "reward_xp": ach.reward_xp,
+            "reward_coins": ach.reward_coins,
+            "unlocked": ach.id in unlocked_ids,
+            "unlocked_at": user_ach.unlocked_at if user_ach else None,
+            "rewarded": user_ach.rewarded if user_ach else False,
+            "progress": user_ach.progress if user_ach else 0,
+        })
+    
+    return Response(result)
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def my_achievements(request):
+    """
+    Get user's unlocked achievements.
+    GET /api/achievements/my/
+    """
+    user_achievements = UserAchievement.objects.filter(user=request.user).select_related('achievement')
+    serializer = UserAchievementSerializer(user_achievements, many=True)
+    return Response(serializer.data)
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def claim_achievement_reward(request, achievement_id):
+    """
+    Claim reward for an unlocked achievement.
+    POST /api/achievements/{id}/claim/
+    """
+    try:
+        user_ach = UserAchievement.objects.get(user=request.user, achievement_id=achievement_id)
+    except UserAchievement.DoesNotExist:
+        return Response({"error": "Achievement not unlocked"}, status=status.HTTP_404_NOT_FOUND)
+    
+    if user_ach.rewarded:
+        return Response({"error": "Already claimed"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    success = user_ach.claim_reward()
+    if success:
+        return Response({
+            "message": f"Received +{user_ach.achievement.reward_xp} XP, +{user_ach.achievement.reward_coins} Coins!",
+            "xp": user_ach.achievement.reward_xp,
+            "coins": user_ach.achievement.reward_coins
+        })
+    
+    return Response({"error": "Failed to claim"}, status=status.HTTP_400_BAD_REQUEST)

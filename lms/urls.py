@@ -39,5 +39,10 @@ urlpatterns = [
     path("student/history/", views.student_history, name="student-history"),
     path("classes/<int:class_id>/analytics/", views.class_analytics, name="class-analytics"),
     
+    # Achievements Endpoints
+    path("achievements/", views.achievements_list, name="achievements-list"),
+    path("achievements/my/", views.my_achievements, name="my-achievements"),
+    path("achievements/<int:achievement_id>/claim/", views.claim_achievement_reward, name="claim-achievement"),
+    
     path("", include(router.urls)),
 ]
