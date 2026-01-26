@@ -132,7 +132,7 @@ def get_primary_deck_name(apkg_path: str) -> str:
 
 def parse_anki_file(apkg_path: str) -> list[dict]:
     """
-    Parse an Anki .apkg file, extract cards, and save media to local storage (VPS).
+    Parse an Anki .apkg file, extract cards with ALL fields and field names.
     """
     import json
     
@@ -145,8 +145,6 @@ def parse_anki_file(apkg_path: str) -> list[dict]:
         os.makedirs(media_dir)
         
     # Use ABSOLUTE URL for production
-    # Hardcode for now or get from settings.ALLOWED_HOSTS[0]
-    # Better to use a setting variable, but for quick fix:
     domain = "https://api.ankivn.com" 
     media_url_base = f"{domain}{settings.MEDIA_URL}anki_media/"
 
@@ -167,21 +165,14 @@ def parse_anki_file(apkg_path: str) -> list[dict]:
                 
                 print(f"Found {len(media_map)} media files.")
 
-                # Process each media file
+                # Process each media file (including audio now)
                 for zip_name, filename in media_map.items():
-                    # Skip if not an image (audio/video support can be added later if needed)
-                    if not any(filename.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp']):
-                         continue
-
                     src_path = os.path.join(temp_dir, zip_name)
                     dest_path = os.path.join(media_dir, filename)
                     
                     if os.path.exists(src_path):
-                        # Copy file to media directory
-                        # Use copy2 to preserve metadata, or just copy
                         try:
                             shutil.copy2(src_path, dest_path)
-                            # Generate URL
                             url_mapping[filename] = f"{media_url_base}{filename}"
                         except Exception as e:
                             print(f"Error copying {filename}: {e}")
@@ -201,11 +192,48 @@ def parse_anki_file(apkg_path: str) -> list[dict]:
         conn = sqlite3.connect(best_db)
         cursor = conn.cursor()
         
+        # 3. Get note types (models) with field definitions
+        # In Anki 2.1+, models are stored in 'notetypes' table or 'col' table's 'models' column
+        notetype_fields = {}  # mid -> list of field names
+        default_note_type = "Basic"
+        notetype_names = {}  # mid -> note type name
+        
+        try:
+            # Try new schema first (Anki 2.1.28+)
+            cursor.execute("SELECT id, name, flds FROM notetypes")
+            for mid, name, flds_json in cursor.fetchall():
+                notetype_names[mid] = name
+                try:
+                    flds = json.loads(flds_json) if isinstance(flds_json, str) else flds_json
+                    if isinstance(flds, list):
+                        notetype_fields[mid] = [f.get('name', f'Field{i}') if isinstance(f, dict) else f'Field{i}' 
+                                                for i, f in enumerate(flds)]
+                    print(f"NotType {name}: {notetype_fields.get(mid, [])}")
+                except:
+                    pass
+        except sqlite3.OperationalError:
+            # Fallback to old schema (col.models)
+            try:
+                cursor.execute("SELECT models FROM col")
+                row = cursor.fetchone()
+                if row:
+                    models = json.loads(row[0])
+                    for mid, model in models.items():
+                        mid = int(mid)
+                        notetype_names[mid] = model.get('name', 'Unknown')
+                        flds = model.get('flds', [])
+                        notetype_fields[mid] = [f.get('name', f'Field{i}') for i, f in enumerate(flds)]
+                        print(f"Model {notetype_names[mid]}: {notetype_fields[mid]}")
+            except Exception as e:
+                print(f"Error reading models: {e}")
+        
+        # 4. Get valid note IDs (those with cards)
         try:
             cursor.execute("SELECT DISTINCT nid FROM cards")
             valid_nids = {row[0] for row in cursor.fetchall()}
             
-            cursor.execute("SELECT id, flds FROM notes")
+            # Get notes with their model id
+            cursor.execute("SELECT id, mid, flds, tags FROM notes")
             rows = cursor.fetchall()
             
             print(f"Found {len(rows)} raw notes. Valid notes: {len(valid_nids)}")
@@ -215,45 +243,57 @@ def parse_anki_file(apkg_path: str) -> list[dict]:
             return []
         
         def replace_media_src(content):
-            """Replace src="filename" with src="/media/anki_media/filename" """
+            """Replace src="filename" and [sound:...] with proper URLs"""
             for filename, url in url_mapping.items():
                 if filename in content:
                     content = content.replace(f'src="{filename}"', f'src="{url}"')
                     content = content.replace(f"src='{filename}'", f"src='{url}'")
+                    # Handle sound tags
+                    content = content.replace(f'[sound:{filename}]', f'<audio controls src="{url}"></audio>')
             return content
 
-        for note_id, fields_str in rows:
+        for note_id, mid, fields_str, tags_str in rows:
             if note_id not in valid_nids:
                 continue
 
-            fields = fields_str.split('\x1f')
-            if not fields:
+            # Split fields by Anki's field separator
+            field_values = fields_str.split('\x1f')
+            if not field_values:
                 continue
-                
-            front = fields[0].strip()
-            if len(fields) > 1:
-                back = "<br><hr><br>".join([f.strip() for f in fields[1:] if f.strip()])
-            else:
-                back = "<i>(No content on back)</i>"
             
-            # Replace media URLs
-            front = replace_media_src(front)
-            back = replace_media_src(back)
-
-            if not front and len(fields) == 1:
-                continue
-                
+            # Get field names for this note type
+            field_names = notetype_fields.get(mid, [f'Field{i}' for i in range(len(field_values))])
+            note_type_name = notetype_names.get(mid, default_note_type)
+            
+            # Parse tags
+            tags = [t.strip() for t in tags_str.split() if t.strip()] if tags_str else []
+            
+            # Build fields dict {field_name: value}
+            fields_dict = {}
+            for i, val in enumerate(field_values):
+                name = field_names[i] if i < len(field_names) else f'Field{i}'
+                fields_dict[name] = replace_media_src(val.strip())
+            
+            # For backwards compatibility, also set front/back
+            front = replace_media_src(field_values[0].strip()) if field_values else ""
+            back = replace_media_src("<br><hr><br>".join([f.strip() for f in field_values[1:] if f.strip()])) if len(field_values) > 1 else ""
+            
             cards.append({
                 "front": front,
                 "back": back,
+                "fields": fields_dict,
+                "note_type": note_type_name,
+                "tags": tags,
                 "note_id": str(note_id),
             })
         
         conn.close()
-        print(f"Parsed {len(cards)} cards.")
+        print(f"Parsed {len(cards)} cards with fields.")
         
     except Exception as e:
+        import traceback
         print(f"Parse error: {e}")
+        traceback.print_exc()
         return []
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

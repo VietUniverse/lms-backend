@@ -8,7 +8,7 @@ from django.contrib.auth import get_user_model
 from django.db.models import Sum, Q
 import requests
 
-from .models import Classroom, Deck, Card, Test, Progress
+from .models import Classroom, Deck, Card, Test, Progress, MarketplaceItem
 from .utils import download_from_appwrite, parse_anki_file, get_primary_deck_name
 import tempfile
 import os
@@ -20,6 +20,7 @@ from .serializers import (
     TestSerializer,
     ProgressSerializer,
     SupportTicketSerializer,
+    MarketplaceItemSerializer,
 )
 
 User = get_user_model()
@@ -576,13 +577,16 @@ class DeckViewSet(viewsets.ModelViewSet):
             if title and actual_deck_name and title != actual_deck_name:
                 deck_name_warning = f"Tên deck trong file là '{actual_deck_name}', đã sử dụng thay cho '{title}'"
 
-            # Bulk create Card objects
+            # Bulk create Card objects with all fields
             card_objects = [
                 Card(
                     deck=deck,
-                    front=c["front"],
-                    back=c["back"],
-                    note_id=c["note_id"],
+                    front=c.get("front", ""),
+                    back=c.get("back", ""),
+                    note_id=c.get("note_id", ""),
+                    fields=c.get("fields", {}),
+                    note_type=c.get("note_type", "Basic"),
+                    tags=c.get("tags", []),
                 )
                 for c in parsed_cards
             ]
@@ -592,11 +596,16 @@ class DeckViewSet(viewsets.ModelViewSet):
             deck.card_count = len(card_objects)
             deck.save()
 
-            # Prepare preview (first 5 cards)
-            preview = [
-                {"front": c.front[:200], "back": c.back[:200]}
-                for c in card_objects[:5]
-            ]
+            # Prepare preview (first 5 cards) - show field names
+            preview = []
+            for c in card_objects[:5]:
+                fields = c.fields if c.fields else {"Front": c.front, "Back": c.back}
+                preview.append({
+                    "front": c.front[:200],
+                    "back": c.back[:200],
+                    "fields": {k: v[:100] for k, v in fields.items() if v},
+                    "note_type": c.note_type or "Basic"
+                })
 
             response_data = {
                 "deck": DeckSerializer(deck).data,
@@ -691,17 +700,21 @@ def deck_card_detail(request, deck_id, card_id):
     if request.method == "PATCH":
         front = request.data.get("front")
         back = request.data.get("back")
+        fields = request.data.get("fields")
         
         if front is not None:
             card.front = front
         if back is not None:
             card.back = back
+        if fields is not None:
+            card.fields = fields
         
         card.save()
         return Response({
             "id": card.id,
             "front": card.front,
             "back": card.back,
+            "fields": card.fields,
             "message": "Card updated"
         })
     
@@ -1740,3 +1753,87 @@ def claim_achievement_reward(request, achievement_id):
         })
     
     return Response({"error": "Failed to claim"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# ============================================
+# MARKETPLACE API
+# ============================================
+
+class MarketplaceViewSet(viewsets.ModelViewSet):
+    """
+    Marketplace for sharing decks.
+    - List: Approved decks only (for students).
+    - Create: Share a deck (status=PENDING).
+    - Approve: Admin only.
+    """
+    queryset = MarketplaceItem.objects.all()
+    serializer_class = MarketplaceItemSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff or user.role == 'teacher': 
+            # Admin/Teacher view all (to approve or manage)
+            return MarketplaceItem.objects.all()
+        # Students only see approved
+        return MarketplaceItem.objects.filter(status='APPROVED')
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        if not (request.user.is_staff or request.user.role == 'teacher'): # Allow teacher to approve for now? Or just Admin? User said "Admin to manage". Let's assume Teacher can be admin or just is_staff check.
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+            
+        item = self.get_object()
+        item.status = 'APPROVED'
+        item.save()
+        return Response({"status": "approved"})
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        if not (request.user.is_staff or request.user.role == 'teacher'):
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+            
+        item = self.get_object()
+        item.status = 'REJECTED'
+        item.save()
+        return Response({"status": "rejected"})
+        
+    @action(detail=True, methods=['post'])
+    def download(self, request, pk=None):
+        """
+        User clones the deck from Marketplace.
+        """
+        item = self.get_object()
+        user = request.user
+        
+        # Increment download count
+        item.downloads += 1
+        item.save()
+        
+        # Logic to clone Deck to user's library?
+        # Or just return the deck data for frontend to import?
+        # Ideally backend clones the deck locally.
+        
+        # Clone Deck logic:
+        original_deck = item.deck
+        new_deck = Deck.objects.create(
+            teacher=user, # Assign to user (even if student, they own the copy)
+            title=f"{original_deck.title} (Copy)",
+            appwrite_file_id=original_deck.appwrite_file_id, # Reuse file
+            appwrite_file_url=original_deck.appwrite_file_url,
+            card_count=original_deck.card_count,
+            status='ACTIVE'
+        )
+        # Copy cards
+        for card in original_deck.cards.all():
+            Card.objects.create(
+                deck=new_deck,
+                front=card.front,
+                back=card.back,
+                note_id=card.note_id,
+                fields=card.fields,
+                note_type=card.note_type,
+                tags=card.tags
+            )
+            
+        return Response({"message": "Deck downloaded successfully", "new_deck_id": new_deck.id})

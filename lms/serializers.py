@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Classroom, Deck, Test, Progress, SupportTicket, ClassroomJoinRequest, CoinTransaction
+from .models import Classroom, Deck, Card, Test, TestSubmission, Progress, SupportTicket, Event, EventParticipant, Achievement, UserAchievement, MarketplaceItem, ClassroomJoinRequest, CoinTransaction
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -312,3 +312,18 @@ class UserAchievementSerializer(serializers.ModelSerializer):
             "progress", "unlocked_at", "rewarded"
         ]
         read_only_fields = fields
+
+
+class MarketplaceItemSerializer(serializers.ModelSerializer):
+    deck_title = serializers.CharField(source='deck.title', read_only=True)
+    author_name = serializers.CharField(source='author.email', read_only=True)
+    
+    class Meta:
+        model = MarketplaceItem
+        fields = ['id', 'deck', 'deck_title', 'author', 'author_name', 'status', 'price', 'downloads', 'rating', 'source_url', 'created_at']
+        read_only_fields = ['id', 'status', 'downloads', 'rating', 'author', 'created_at']
+
+    def create(self, validated_data):
+        # Assign author from context
+        validated_data['author'] = self.context['request'].user
+        return super().create(validated_data)

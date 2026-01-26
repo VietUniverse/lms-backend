@@ -687,6 +687,53 @@ class EventParticipant(models.Model):
 
 
 # ============================================
+# MARKETPLACE SYSTEM
+# ============================================
+
+class MarketplaceItem(models.Model):
+    """
+    Deck được user chia sẻ lên Marketplace.
+    Cần Admin duyệt (APPROVED) mới hiện công khai.
+    """
+    STATUS_CHOICES = [
+        ("PENDING", "Chờ duyệt"),
+        ("APPROVED", "Đã duyệt"),
+        ("REJECTED", "Từ chối"),
+    ]
+    
+    deck = models.OneToOneField(
+        'Deck',
+        on_delete=models.CASCADE,
+        related_name="marketplace_item"
+    )
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="marketplace_items"
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
+    
+    # Metadata
+    price = models.IntegerField(default=0, help_text="Giá coin (0 = miễn phí)")
+    downloads = models.IntegerField(default=0)
+    rating = models.FloatField(default=0.0)
+    
+    # Source info (if imported)
+    source_url = models.URLField(blank=True, max_length=500)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', '-created_at']),
+        ]
+        
+    def __str__(self):
+        return f"{self.deck.title} ({self.status})"
+
+# ============================================
 # ACHIEVEMENTS SYSTEM
 # ============================================
 
