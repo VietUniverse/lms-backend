@@ -652,7 +652,7 @@ class DeckViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"], url_path="cards")
     def get_cards(self, request, pk=None):
-        """Get all cards in a deck."""
+        """Get all cards in a deck with all fields."""
         deck = self.get_object()
         cards = Card.objects.filter(deck=deck).order_by('id')
         
@@ -662,6 +662,9 @@ class DeckViewSet(viewsets.ModelViewSet):
                 "id": card.id,
                 "front": card.front,
                 "back": card.back,
+                "fields": card.fields if card.fields else {"Front": card.front, "Back": card.back},
+                "note_type": card.note_type or "Basic",
+                "tags": card.tags if card.tags else [],
                 "created_at": card.created_at.isoformat() if hasattr(card, 'created_at') and card.created_at else None
             })
         

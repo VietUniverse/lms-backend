@@ -200,10 +200,22 @@ class Card(models.Model):
     front = models.TextField(help_text="Mặt trước (câu hỏi)")
     back = models.TextField(help_text="Mặt sau (trả lời)")
     note_id = models.CharField(max_length=100, blank=True, help_text="ID gốc từ Anki")
+    
+    # Flexible fields - lưu tất cả fields từ Anki note (VD: {"Text": "...", "Extra": "..."})
+    fields = models.JSONField(default=dict, blank=True, help_text="All note fields as JSON")
+    note_type = models.CharField(max_length=255, blank=True, help_text="Note type/template name")
+    tags = models.JSONField(default=list, blank=True, help_text="Card tags")
+    
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self) -> str:
         return f"{self.deck.title} - {self.front[:50]}..."
+    
+    def get_display_fields(self):
+        """Return fields for display. If fields is empty, fallback to front/back."""
+        if self.fields:
+            return self.fields
+        return {"Front": self.front, "Back": self.back}
 
 
 class Test(models.Model):
