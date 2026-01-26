@@ -13,6 +13,10 @@ urlpatterns = [
     path("", views.index),
     path("dashboard/stats/", views.dashboard_stats),
     
+    # Gamification Endpoints (Phase 1)
+    path("gamification/stats/", views.gamification_stats, name="gamification-stats"),
+    path("gamification/buy-shield/", views.buy_shield, name="buy-shield"),
+    
     # Anki Addon Integration Endpoints
     path("anki/my-decks/", views.anki_my_decks, name="anki-my-decks"),
     path("anki/deck/<int:deck_id>/download/", views.anki_deck_download, name="anki-deck-download"),
@@ -33,3 +37,4 @@ urlpatterns = [
     
     path("", include(router.urls)),
 ]
+

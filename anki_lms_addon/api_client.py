@@ -83,25 +83,30 @@ class LMSClient:
             raise LMSClientError(f"Lỗi kết nối: {str(e.reason)}")
     
     def _refresh_token(self) -> bool:
-        """Try to refresh the access token."""
+        """Try to refresh the access token. Falls back to auto-login if refresh fails."""
         refresh = config.get_refresh_token()
-        if not refresh:
-            return False
+        if refresh:
+            try:
+                result = self._make_request(
+                    "/api/auth/token/refresh/",
+                    method="POST",
+                    data={"refresh": refresh},
+                    auth=False
+                )
+                if "access" in result:
+                    cfg = config.load_config()
+                    cfg["access_token"] = result["access"]
+                    config.save_config(cfg)
+                    return True
+            except LMSClientError:
+                pass
         
-        try:
-            result = self._make_request(
-                "/api/accounts/token/refresh/",
-                method="POST",
-                data={"refresh": refresh},
-                auth=False
-            )
-            if "access" in result:
-                cfg = config.load_config()
-                cfg["access_token"] = result["access"]
-                config.save_config(cfg)
-                return True
-        except LMSClientError:
-            pass
+        # Refresh failed - try auto-login with Anki sync credentials
+        print("[LMS] Refresh token expired, attempting auto-login...")
+        user = self.auto_login()
+        if user:
+            print(f"[LMS] Auto-login successful for {user.get('email', 'unknown')}")
+            return True
         
         return False
     
@@ -152,7 +157,7 @@ class LMSClient:
         Returns user info on success.
         """
         result = self._make_request(
-            "/api/accounts/login/",
+            "/api/auth/login/",
             method="POST",
             data={"email": email, "password": password},
             auth=False

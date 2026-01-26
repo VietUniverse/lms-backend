@@ -9,7 +9,7 @@ from django.db.models import Sum, Q
 import requests
 
 from .models import Classroom, Deck, Card, Test, Progress
-from .utils import download_from_appwrite, parse_anki_file
+from .utils import download_from_appwrite, parse_anki_file, get_primary_deck_name
 import tempfile
 import os
 from .serializers import (
@@ -64,6 +64,47 @@ def dashboard_stats(request):
         "average_score": avg_score,
         "pending_assignments": pending_assignments,
     })
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def gamification_stats(request):
+    """Get current user's gamification stats: XP, Level, Coins, Shields."""
+    from .models import CoinTransaction
+    from .serializers import CoinTransactionSerializer
+    
+    user = request.user
+    
+    # Get recent transactions (last 10)
+    transactions = CoinTransaction.objects.filter(user=user)[:10]
+    
+    return Response({
+        "xp": user.xp,
+        "level": user.level,
+        "coin_balance": user.coin_balance,
+        "shield_count": user.shield_count,
+        "xp_progress": user.xp_progress(),
+        "xp_for_next_level": user.xp_for_next_level(),
+        "recent_transactions": CoinTransactionSerializer(transactions, many=True).data
+    })
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def buy_shield(request):
+    """Buy a streak shield with coins (25 coins each)."""
+    user = request.user
+    
+    if user.buy_shield():
+        return Response({
+            "message": "Mua Khiên thành công!",
+            "shield_count": user.shield_count,
+            "coin_balance": user.coin_balance
+        })
+    else:
+        return Response({
+            "error": "Không đủ Coin. Cần 25 Coin để mua 1 Khiên."
+        }, status=status.HTTP_400_BAD_REQUEST)
 
 
 class IsTeacher(permissions.BasePermission):
@@ -242,8 +283,8 @@ class ClassroomViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["post"], url_path="join")
     def join_class(self, request):
-        """Student joins a class using join code."""
-        from django.db import transaction
+        """Student requests to join a class using join code (requires teacher approval)."""
+        from .models import ClassroomJoinRequest
         
         user = request.user
         
@@ -252,6 +293,7 @@ class ClassroomViewSet(viewsets.ModelViewSet):
             return Response({"error": "Only students can join classes"}, status=status.HTTP_403_FORBIDDEN)
         
         code = request.data.get("code", "").upper()
+        message = request.data.get("message", "")  # Optional message from student
         
         if not code:
             return Response({"error": "Code is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -265,17 +307,124 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         if user in classroom.students.all():
             return Response({"error": "Bạn đã tham gia lớp này rồi"}, status=status.HTTP_400_BAD_REQUEST)
         
-        # Add student with atomic transaction
-        with transaction.atomic():
-            classroom.students.add(user)
+        # Check if already has pending request
+        existing_request = ClassroomJoinRequest.objects.filter(
+            classroom=classroom, student=user, status="PENDING"
+        ).first()
+        if existing_request:
+            return Response({
+                "error": "Bạn đã gửi yêu cầu tham gia lớp này rồi. Vui lòng chờ giáo viên phê duyệt.",
+                "request_id": existing_request.id
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if was previously rejected
+        rejected_request = ClassroomJoinRequest.objects.filter(
+            classroom=classroom, student=user, status="REJECTED"
+        ).first()
+        if rejected_request:
+            # Update existing rejected request to pending
+            rejected_request.status = "PENDING"
+            rejected_request.message = message
+            rejected_request.reviewed_at = None
+            rejected_request.reviewed_by = None
+            rejected_request.save()
+            join_request = rejected_request
+        else:
+            # Create new request
+            join_request = ClassroomJoinRequest.objects.create(
+                classroom=classroom,
+                student=user,
+                message=message
+            )
         
         return Response({
-            "message": "Tham gia lớp thành công",
+            "message": "Đã gửi yêu cầu tham gia lớp. Vui lòng chờ giáo viên phê duyệt.",
+            "request_id": join_request.id,
             "classroom": {
                 "id": classroom.id,
                 "name": classroom.name,
+                "teacher": classroom.teacher.full_name or classroom.teacher.email
             }
-        }, status=status.HTTP_200_OK)
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get"], url_path="pending_requests")
+    def pending_requests(self, request, pk=None):
+        """Get pending join requests for a classroom (teacher only)."""
+        from .models import ClassroomJoinRequest
+        from .serializers import ClassroomJoinRequestSerializer
+        
+        classroom = self.get_object()
+        
+        # Only teacher can view
+        if request.user != classroom.teacher:
+            return Response({"error": "Chỉ giáo viên mới có quyền xem"}, status=status.HTTP_403_FORBIDDEN)
+        
+        requests = ClassroomJoinRequest.objects.filter(classroom=classroom, status="PENDING")
+        serializer = ClassroomJoinRequestSerializer(requests, many=True)
+        
+        return Response({
+            "count": requests.count(),
+            "requests": serializer.data
+        })
+
+    @action(detail=True, methods=["post"], url_path="approve_student")
+    def approve_student(self, request, pk=None):
+        """Approve a student's join request."""
+        from .models import ClassroomJoinRequest
+        
+        classroom = self.get_object()
+        
+        # Only teacher can approve
+        if request.user != classroom.teacher:
+            return Response({"error": "Chỉ giáo viên mới có quyền duyệt"}, status=status.HTTP_403_FORBIDDEN)
+        
+        request_id = request.data.get("request_id")
+        if not request_id:
+            return Response({"error": "request_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            join_request = ClassroomJoinRequest.objects.get(
+                id=request_id, classroom=classroom, status="PENDING"
+            )
+        except ClassroomJoinRequest.DoesNotExist:
+            return Response({"error": "Không tìm thấy yêu cầu"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Approve and add student to class
+        join_request.approve(request.user)
+        
+        return Response({
+            "message": f"Đã duyệt {join_request.student.full_name or join_request.student.email}",
+            "student_id": join_request.student.id
+        })
+
+    @action(detail=True, methods=["post"], url_path="reject_student")
+    def reject_student(self, request, pk=None):
+        """Reject a student's join request."""
+        from .models import ClassroomJoinRequest
+        
+        classroom = self.get_object()
+        
+        # Only teacher can reject
+        if request.user != classroom.teacher:
+            return Response({"error": "Chỉ giáo viên mới có quyền từ chối"}, status=status.HTTP_403_FORBIDDEN)
+        
+        request_id = request.data.get("request_id")
+        if not request_id:
+            return Response({"error": "request_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            join_request = ClassroomJoinRequest.objects.get(
+                id=request_id, classroom=classroom, status="PENDING"
+            )
+        except ClassroomJoinRequest.DoesNotExist:
+            return Response({"error": "Không tìm thấy yêu cầu"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Reject request
+        join_request.reject(request.user)
+        
+        return Response({
+            "message": f"Đã từ chối {join_request.student.full_name or join_request.student.email}"
+        })
 
     @action(detail=True, methods=["post"], url_path="leave")
     def leave_class(self, request, pk=None):
@@ -295,6 +444,7 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         classroom.students.remove(user)
         
         return Response({"message": "Đã rời khỏi lớp"}, status=status.HTTP_200_OK)
+
 
     @action(detail=True, methods=["get"], url_path="leaderboard")
     def leaderboard(self, request, pk=None):
@@ -372,39 +522,47 @@ class DeckViewSet(viewsets.ModelViewSet):
     def upload(self, request):
         """Upload .apkg file directly and parse cards (Local storage)."""
         file_obj = request.FILES.get("file")
-        title = request.data.get("title")
+        title = request.data.get("title", "")  # Title is now optional
 
-        if not file_obj or not title:
+        if not file_obj:
             return Response(
-                {"error": "File and title are required"}, 
+                {"error": "File is required"}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Create Deck first to get ID
-        deck = Deck.objects.create(
-            teacher=request.user,
-            title=title,
-            card_count=0,
-            status="DRAFT",
-            appwrite_file_id="pending",  # Will be updated
-        )
-
+        # Save to temp file first to extract deck name
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.apkg', delete=False) as tmp:
+            tmp_path = tmp.name
+            for chunk in file_obj.chunks():
+                tmp.write(chunk)
+        
         try:
-            # Save uploaded file to permanent location
-            import os
-            from django.conf import settings
+            # Extract actual deck name from .apkg file FIRST
+            actual_deck_name = get_primary_deck_name(tmp_path)
             
-            # Create decks directory if not exists
+            # Use extracted name, fallback to user title, then filename
+            final_title = actual_deck_name or title or file_obj.name.replace('.apkg', '')
+            
+            # Create Deck with correct name from the start
+            deck = Deck.objects.create(
+                teacher=request.user,
+                title=final_title,
+                card_count=0,
+                status="DRAFT",
+                appwrite_file_id="pending",
+            )
+
+            # Move temp file to permanent location
             decks_dir = os.path.join(settings.MEDIA_ROOT, 'decks')
             os.makedirs(decks_dir, exist_ok=True)
             
-            # Save with deck ID as filename
             apkg_filename = f"deck_{deck.id}.apkg"
             apkg_path = os.path.join(decks_dir, apkg_filename)
             
-            with open(apkg_path, 'wb') as dest_file:
-                for chunk in file_obj.chunks():
-                    dest_file.write(chunk)
+            import shutil
+            shutil.move(tmp_path, apkg_path)
+            tmp_path = None  # Mark as moved
             
             # Update deck with local file path
             deck.appwrite_file_id = f"local:{apkg_filename}"
@@ -412,6 +570,11 @@ class DeckViewSet(viewsets.ModelViewSet):
 
             # Parse cards
             parsed_cards = parse_anki_file(apkg_path)
+            
+            # Build warning if user-provided title was different
+            deck_name_warning = None
+            if title and actual_deck_name and title != actual_deck_name:
+                deck_name_warning = f"Tên deck trong file là '{actual_deck_name}', đã sử dụng thay cho '{title}'"
 
             # Bulk create Card objects
             card_objects = [
@@ -435,10 +598,16 @@ class DeckViewSet(viewsets.ModelViewSet):
                 for c in card_objects[:5]
             ]
 
-            return Response({
+            response_data = {
                 "deck": DeckSerializer(deck).data,
                 "preview": preview,
-            }, status=status.HTTP_201_CREATED)
+                "actual_deck_name": actual_deck_name,
+            }
+            
+            if deck_name_warning:
+                response_data["warning"] = deck_name_warning
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
 
         except Exception as e:
             deck.delete()

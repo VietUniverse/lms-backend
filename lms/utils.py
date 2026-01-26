@@ -51,6 +51,85 @@ def download_from_appwrite(file_id: str, dest_path: str) -> None:
     logger.info(f"Download complete: {dest_path}")
 
 
+def extract_deck_names(apkg_path: str) -> list[str]:
+    """
+    Extract deck names from an .apkg file.
+    Supports both old (JSON in col.decks) and new (separate decks table) Anki formats.
+    
+    Returns:
+        List of deck names found in the .apkg file
+    """
+    import json
+    
+    deck_names = []
+    temp_dir = tempfile.mkdtemp()
+    
+    try:
+        # Extract the .apkg
+        with zipfile.ZipFile(apkg_path, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
+        
+        # Find database - prefer anki21 (newer format)
+        db_path_20 = os.path.join(temp_dir, "collection.anki2")
+        db_path_21 = os.path.join(temp_dir, "collection.anki21")
+        best_db = db_path_21 if os.path.exists(db_path_21) else (db_path_20 if os.path.exists(db_path_20) else None)
+        
+        if not best_db:
+            return []
+        
+        conn = sqlite3.connect(best_db)
+        cursor = conn.cursor()
+        
+        try:
+            # Check if new format (separate decks table)
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='decks'")
+            has_decks_table = cursor.fetchone() is not None
+            
+            if has_decks_table:
+                # New Anki 2.1.50+ format
+                cursor.execute("SELECT name FROM decks WHERE name != 'Default'")
+                deck_names = [row[0] for row in cursor.fetchall()]
+            else:
+                # Old format - JSON in col.decks
+                cursor.execute("SELECT decks FROM col LIMIT 1")
+                decks_json = cursor.fetchone()[0]
+                if decks_json:
+                    decks_data = json.loads(decks_json)
+                    deck_names = [data.get('name') for data in decks_data.values() 
+                                  if data.get('name') and data.get('name') != 'Default']
+        except Exception as e:
+            print(f"Error reading decks: {e}")
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        print(f"Error extracting deck names: {e}")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    
+    return deck_names
+
+
+def get_primary_deck_name(apkg_path: str) -> str:
+    """
+    Get the primary (top-level, non-Default) deck name from an .apkg file.
+    
+    Returns:
+        The primary deck name, or empty string if not found
+    """
+    deck_names = extract_deck_names(apkg_path)
+    
+    # Filter out subdecks (those containing ::) to get top-level decks
+    top_level_decks = [name for name in deck_names if '::' not in name]
+    
+    if top_level_decks:
+        return top_level_decks[0]
+    elif deck_names:
+        # If only subdecks exist, get the root deck name from the first subdeck
+        return deck_names[0].split('::')[0]
+    return ""
+
+
 def parse_anki_file(apkg_path: str) -> list[dict]:
     """
     Parse an Anki .apkg file, extract cards, and save media to local storage (VPS).

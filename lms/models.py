@@ -52,6 +52,96 @@ class Classroom(models.Model):
         return self.name
 
 
+class ClassroomJoinRequest(models.Model):
+    """Yêu cầu tham gia lớp học, cần giáo viên phê duyệt."""
+    STATUS_CHOICES = [
+        ("PENDING", "Chờ duyệt"),
+        ("APPROVED", "Đã duyệt"),
+        ("REJECTED", "Từ chối"),
+    ]
+    
+    classroom = models.ForeignKey(
+        Classroom,
+        on_delete=models.CASCADE,
+        related_name="join_requests"
+    )
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="join_requests"
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
+    message = models.TextField(blank=True, help_text="Lời nhắn từ học sinh")
+    created_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewed_join_requests"
+    )
+    
+    class Meta:
+        unique_together = ('classroom', 'student')
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.student.email} -> {self.classroom.name} ({self.status})"
+
+    def approve(self, reviewer):
+        """Approve the join request and add student to classroom."""
+        from django.utils import timezone
+        self.status = "APPROVED"
+        self.reviewed_at = timezone.now()
+        self.reviewed_by = reviewer
+        self.save()
+        self.classroom.students.add(self.student)
+        # Award XP for joining a class
+        self.student.add_xp(10)
+
+    def reject(self, reviewer):
+        """Reject the join request."""
+        from django.utils import timezone
+        self.status = "REJECTED"
+        self.reviewed_at = timezone.now()
+        self.reviewed_by = reviewer
+        self.save()
+
+
+class CoinTransaction(models.Model):
+    """Lịch sử giao dịch Coin."""
+    TRANSACTION_TYPES = [
+        ("EARN", "Kiếm được"),
+        ("SPEND", "Chi tiêu"),
+        ("BONUS", "Thưởng"),
+        ("REFUND", "Hoàn lại"),
+    ]
+    
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="coin_transactions"
+    )
+    amount = models.IntegerField(help_text="Positive for earn, negative for spend")
+    transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPES)
+    reason = models.CharField(max_length=255, blank=True)
+    balance_after = models.IntegerField(default=0, help_text="Balance after transaction")
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def save(self, *args, **kwargs):
+        if not self.pk:  # Only on create
+            self.balance_after = self.user.coin_balance
+        super().save(*args, **kwargs)
+    
+    def __str__(self):
+        sign = "+" if self.amount > 0 else ""
+        return f"{self.user.email}: {sign}{self.amount} Coin ({self.reason})"
+
+
 class Deck(models.Model):
     """Bộ thẻ Anki (.apkg) - file lưu trên Appwrite, chỉ giữ reference ở đây."""
     STATUS_CHOICES = [
@@ -76,6 +166,25 @@ class Deck(models.Model):
     version = models.IntegerField(default=1, help_text="Auto-incremented on update")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def delete(self, *args, **kwargs):
+        """Override delete to also remove the associated .apkg file."""
+        import os
+        from pathlib import Path
+        from django.conf import settings as django_settings
+        
+        # Delete local apkg file if exists
+        if self.appwrite_file_id and self.appwrite_file_id.startswith('local:'):
+            filename = self.appwrite_file_id.replace('local:', '')
+            media_path = Path(django_settings.MEDIA_ROOT) / 'decks' / filename
+            if media_path.exists():
+                try:
+                    os.remove(media_path)
+                    print(f"Deleted apkg file: {media_path}")
+                except Exception as e:
+                    print(f"Failed to delete apkg file {media_path}: {e}")
+        
+        super().delete(*args, **kwargs)
 
     def __str__(self) -> str:
         return self.title

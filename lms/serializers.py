@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Classroom, Deck, Test, Progress, SupportTicket
+from .models import Classroom, Deck, Test, Progress, SupportTicket, ClassroomJoinRequest, CoinTransaction
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -9,7 +9,42 @@ class StudentSerializer(serializers.ModelSerializer):
     """Serializer cho học sinh trong lớp."""
     class Meta:
         model = User
-        fields = ["id", "email", "full_name"]
+        fields = ["id", "email", "full_name", "xp", "level", "coin_balance"]
+
+
+class StudentGamificationSerializer(serializers.ModelSerializer):
+    """Serializer with full gamification stats."""
+    xp_progress = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = User
+        fields = ["id", "email", "full_name", "xp", "level", "coin_balance", "shield_count", "xp_progress"]
+    
+    def get_xp_progress(self, obj):
+        return obj.xp_progress()
+
+
+class ClassroomJoinRequestSerializer(serializers.ModelSerializer):
+    """Serializer cho yêu cầu tham gia lớp."""
+    student_email = serializers.CharField(source='student.email', read_only=True)
+    student_name = serializers.CharField(source='student.full_name', read_only=True)
+    classroom_name = serializers.CharField(source='classroom.name', read_only=True)
+    
+    class Meta:
+        model = ClassroomJoinRequest
+        fields = [
+            "id", "classroom", "student", "student_email", "student_name",
+            "classroom_name", "status", "message", "created_at", "reviewed_at"
+        ]
+        read_only_fields = ["id", "student", "status", "created_at", "reviewed_at"]
+
+
+class CoinTransactionSerializer(serializers.ModelSerializer):
+    """Serializer cho lịch sử giao dịch Coin."""
+    class Meta:
+        model = CoinTransaction
+        fields = ["id", "amount", "transaction_type", "reason", "balance_after", "created_at"]
+        read_only_fields = fields
 
 
 class DeckSerializer(serializers.ModelSerializer):
