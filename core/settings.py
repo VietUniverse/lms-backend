@@ -23,8 +23,9 @@ DEBUG = env.bool("DEBUG", default=True)
 ALLOWED_HOSTS = env.list(
     "ALLOWED_HOSTS",
     default=[
-        "ankilms-062168bef871.herokuapp.com",
-        "lms.ankivn.com",
+        "api.ankivn.com",
+        "ankivn.com",
+        "www.ankivn.com",
         "localhost",
         "127.0.0.1",
     ],
@@ -77,8 +78,9 @@ CORS_ALLOW_ALL_ORIGINS = env.bool("CORS_ALLOW_ALL_ORIGINS", default=False)
 CORS_ALLOWED_ORIGINS = env.list(
     "CORS_ALLOWED_ORIGINS",
     default=[
-        "https://lms-frontend-is6g.vercel.app",
         "https://lms.ankivn.com",
+        "https://www.ankivn.com",
+        "https://ankivn.com",
         "http://localhost:3000",
     ],
 )
