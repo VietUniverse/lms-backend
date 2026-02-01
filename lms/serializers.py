@@ -93,7 +93,7 @@ class ClassroomSerializer(serializers.ModelSerializer):
         model = Classroom
         fields = [
             "id", "name", "description", "join_code", "status", "student_count", "created_at",
-            "class_type", "max_students", "is_public", "topics", "is_owner"  # Added is_owner
+            "class_type", "max_students", "is_public", "topics", "is_owner", "teacher"  # Added teacher for fallback
         ]
         read_only_fields = ["id", "join_code", "created_at"]
 
