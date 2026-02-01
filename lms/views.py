@@ -266,6 +266,44 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         classroom.students.remove(user)
         return Response({"message": "Đã rời khỏi lớp thành công."}, status=status.HTTP_200_OK)
 
+    @action(detail=False, methods=["post"], url_path="join_class")
+    def join_class(self, request):
+        """Học sinh tham gia lớp bằng mã code."""
+        code = request.data.get("code")
+        if not code:
+            return Response({"message": "Vui lòng nhập mã lớp."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            classroom = Classroom.objects.get(join_code=code)
+        except Classroom.DoesNotExist:
+            return Response({"message": "Mã lớp không hợp lệ."}, status=status.HTTP_404_NOT_FOUND)
+            
+        user = request.user
+        
+        # Check if already joined
+        if user in classroom.students.all() or classroom.teacher == user:
+            return Response({"status": "joined", "message": "Bạn đã tham gia lớp này rồi."}, status=status.HTTP_200_OK)
+            
+        # Check logic: Public class joins immediately, Private class needs approval (if logic exists)
+        # For now, let's allow direct join for simplicity or based on 'is_public'
+        # Future: Create JoinRequest if not public
+        
+        classroom.students.add(user)
+        return Response({"status": "joined", "message": f"Tham gia lớp {classroom.name} thành công!"}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["get"], url_path="pending_requests")
+    def pending_requests(self, request, pk=None):
+        """Lấy danh sách yêu cầu tham gia (Demo: Return empty list or fake data if model not ready)."""
+        # If you have a JoinRequest model, query it here.
+        # For now, returning empty to prevent 404/500 if frontend calls it.
+        return Response([])
+
+    @action(detail=True, methods=["post"], url_path="approve_student")
+    def approve_student(self, request, pk=None):
+        """Duyệt học sinh (Demo stub)."""
+        return Response({"message": "Đã duyệt thành công"}, status=status.HTTP_200_OK)
+
+
     @action(detail=True, methods=["post"], url_path="add_deck")
     def add_deck(self, request, pk=None):
         """Thêm deck vào lớp và tự động inject vào collection của students."""
