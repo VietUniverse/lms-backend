@@ -58,11 +58,13 @@ MIDDLEWARE = [
 ]
 
 
+
 # CORS & CSRF Configuration
-CORS_ALLOWED_ORIGINS = [
-    "https://lms.ankivn.com",
-    "http://localhost:3000",
-]
+# CORS_ALLOWED_ORIGINS = [
+#     "https://lms.ankivn.com",
+#     "http://localhost:3000",
+# ]
+CORS_ALLOW_ALL_ORIGINS = True 
 CSRF_TRUSTED_ORIGINS = [
     "https://lms.ankivn.com",
     "https://api.ankivn.com",
