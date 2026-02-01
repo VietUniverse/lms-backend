@@ -235,6 +235,23 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         classroom.students.remove(student)
         return Response({"message": "Student removed successfully"}, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=["post"], url_path="leave")
+    def leave_class(self, request, pk=None):
+        """Học sinh tự rời khỏi lớp."""
+        classroom = self.get_object()
+        user = request.user
+        
+        # Check if user is the teacher/owner - they cannot leave their own class
+        if classroom.teacher == user:
+            return Response({"error": "Chủ lớp không thể rời lớp. Hãy xóa lớp nếu muốn."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if student is in the class
+        if user not in classroom.students.all():
+            return Response({"error": "Bạn không phải là thành viên của lớp này."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        classroom.students.remove(user)
+        return Response({"message": "Đã rời khỏi lớp thành công."}, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=["post"], url_path="add_deck")
     def add_deck(self, request, pk=None):
         """Thêm deck vào lớp và tự động inject vào collection của students."""
