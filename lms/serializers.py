@@ -95,7 +95,7 @@ class ClassroomSerializer(serializers.ModelSerializer):
             "id", "name", "description", "join_code", "status", "student_count", "created_at",
             "class_type", "max_students", "is_public", "topics", "is_owner", "teacher"  # Added teacher for fallback
         ]
-        read_only_fields = ["id", "join_code", "created_at"]
+        read_only_fields = ["id", "join_code", "created_at", "teacher"]
 
     def get_student_count(self, obj):
         return obj.students.count()
