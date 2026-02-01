@@ -172,10 +172,24 @@ class IsTeacher(permissions.BasePermission):
         return request.user.is_authenticated and request.user.role == "teacher"
 
 
+class IsOwnerOrReadOnly(permissions.BasePermission):
+    """
+    Object-level permission to only allow owners of an object to edit it.
+    Assumes the model instance has an `owner` attribute or `teacher` field.
+    """
+    def has_object_permission(self, request, view, obj):
+        # Read permissions are allowed to any request,
+        # so we'll always allow GET, HEAD or OPTIONS requests.
+        if request.method in permissions.SAFE_METHODS:
+            return True
+
+        # Instance must have an attribute named `owner`.
+        return obj.teacher == request.user
+
 class ClassroomViewSet(viewsets.ModelViewSet):
     """API endpoint cho Classroom (classes)."""
     serializer_class = ClassroomSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsOwnerOrReadOnly]
 
     def get_queryset(self):
         user = self.request.user
