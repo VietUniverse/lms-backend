@@ -142,6 +142,38 @@ class CoinTransaction(models.Model):
         return f"{self.user.email}: {sign}{self.amount} Coin ({self.reason})"
 
 
+class Activity(models.Model):
+    """Track user activities for dashboard feed."""
+    ACTIVITY_TYPES = [
+        ("CARD_REVIEW", "Reviewed cards"),
+        ("CLASS_JOIN", "Joined class"),
+        ("CLASS_CREATE", "Created class"),
+        ("DECK_CREATE", "Created deck"),
+        ("DECK_UPLOAD", "Uploaded deck"),
+        ("TEST_SUBMIT", "Submitted test"),
+        ("ACHIEVEMENT", "Unlocked achievement"),
+        ("LOGIN", "Logged in"),
+    ]
+    
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="activities"
+    )
+    activity_type = models.CharField(max_length=50, choices=ACTIVITY_TYPES)
+    description = models.TextField()
+    target_name = models.CharField(max_length=255, blank=True)
+    target_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name_plural = "Activities"
+    
+    def __str__(self):
+        return f"{self.user.email}: {self.activity_type} - {self.description[:50]}"
+
+
 class Deck(models.Model):
     """Bộ thẻ Anki (.apkg) - file lưu trên Appwrite, chỉ giữ reference ở đây."""
     STATUS_CHOICES = [

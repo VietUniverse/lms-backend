@@ -22,8 +22,30 @@ class User(AbstractUser):
     coin_balance = models.IntegerField(default=0, help_text="Coin balance")
     shield_count = models.IntegerField(default=1, help_text="Streak shields (1 free at start)")
 
+    # ============================================
+    # PROFILE & SETTINGS FIELDS
+    # ============================================
+    avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
+    
+    # JSON fields for settings
+    notification_settings = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='{"daily_reminder": true, "streak_warning": true, "achievements": true, "marketing": false}'
+    )
+    preferences = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='{"dark_mode": false, "sound_effects": true, "language": "vi", "cards_per_day": 20}'
+    )
+    
+    # Soft delete
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username"]
+
 
     def __str__(self):
         return self.email

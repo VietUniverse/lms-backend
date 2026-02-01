@@ -14,6 +14,8 @@ router.register(r"marketplace", views.MarketplaceViewSet, basename="marketplace"
 urlpatterns = [
     path("", views.index),
     path("dashboard/stats/", views.dashboard_stats),
+    path("dashboard/student-stats/", views.student_dashboard_stats, name="student-dashboard-stats"),
+    path("activity/", views.recent_activity, name="recent-activity"),
     
     # Gamification Endpoints (Phase 1)
     path("gamification/stats/", views.gamification_stats, name="gamification-stats"),

@@ -108,6 +108,64 @@ def buy_shield(request):
         }, status=status.HTTP_400_BAD_REQUEST)
 
 
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def student_dashboard_stats(request):
+    """Dashboard stats for students (different from teacher stats)."""
+    from django.db.models import Avg, Q
+    from .models import Classroom, Deck, Test, TestSubmission
+    
+    user = request.user
+    
+    # Enrolled classes count
+    enrolled_classes = Classroom.objects.filter(students=user).count()
+    
+    # My decks (from enrolled classes)
+    my_decks = Deck.objects.filter(
+        classrooms__students=user
+    ).distinct().count()
+    
+    # Completion rate (average test score)
+    submissions = TestSubmission.objects.filter(student=user)
+    completion_rate = 0
+    if submissions.exists():
+        avg_score = submissions.aggregate(avg=Avg('score'))['avg'] or 0
+        completion_rate = round(avg_score, 1)
+    
+    # Pending assignments (tests in my classes that I haven't submitted)
+    my_classes = Classroom.objects.filter(students=user)
+    pending = Test.objects.filter(
+        classroom__in=my_classes,
+        status="ACTIVE"
+    ).exclude(submissions__student=user).count()
+    
+    return Response({
+        "enrolled_classes": enrolled_classes,
+        "my_decks": my_decks,
+        "completion_rate": completion_rate,
+        "pending_assignments": pending,
+    })
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def recent_activity(request):
+    """Get user's recent activity feed."""
+    from .models import Activity
+    
+    limit = int(request.query_params.get('limit', 10))
+    activities = Activity.objects.filter(user=request.user)[:limit]
+    
+    return Response([{
+        "id": a.id,
+        "type": a.activity_type,
+        "description": a.description,
+        "target_name": a.target_name,
+        "target_id": a.target_id,
+        "time": a.created_at.isoformat(),
+    } for a in activities])
+
+
 class IsTeacher(permissions.BasePermission):
     """Chỉ cho phép Teacher truy cập."""
     def has_permission(self, request, view):
