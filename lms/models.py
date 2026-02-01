@@ -36,6 +36,17 @@ class Classroom(models.Model):
         related_name="classrooms",
         blank=True,
     )
+    
+    # === ADVANCED CLASS FEATURES ===
+    CLASS_TYPE_CHOICES = [
+        ("CLASS", "Lớp học"),
+        ("GROUP", "Nhóm học tập"),
+    ]
+    class_type = models.CharField(max_length=10, choices=CLASS_TYPE_CHOICES, default="CLASS")
+    max_students = models.PositiveIntegerField(default=50, help_text="Số lượng học viên tối đa")
+    is_public = models.BooleanField(default=False, help_text="Công khai cho mọi người tìm kiếm")
+    topics = models.JSONField(default=list, blank=True, help_text="Danh sách chủ đề (tags)")
+    
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):

@@ -90,7 +90,10 @@ class ClassroomSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Classroom
-        fields = ["id", "name", "description", "join_code", "status", "student_count", "created_at"]
+        fields = [
+            "id", "name", "description", "join_code", "status", "student_count", "created_at",
+            "class_type", "max_students", "is_public", "topics"  # Advanced fields
+        ]
         read_only_fields = ["id", "join_code", "created_at"]
 
     def get_student_count(self, obj):
@@ -106,7 +109,11 @@ class ClassroomDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Classroom
-        fields = ["id", "name", "description", "join_code", "status", "student_count", "students", "tests", "decks", "created_at"]
+        fields = [
+            "id", "name", "description", "join_code", "status", "student_count", 
+            "students", "tests", "decks", "created_at",
+            "class_type", "max_students", "is_public", "topics"  # Advanced fields
+        ]
         read_only_fields = ["id", "join_code", "created_at"]
 
     def get_student_count(self, obj):

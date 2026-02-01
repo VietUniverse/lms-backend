@@ -181,7 +181,10 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if user.role == "teacher":
             return Classroom.objects.filter(teacher=user)
-        return Classroom.objects.filter(students=user)
+        # Students see classes they joined OR groups they created (as owner/teacher)
+        return Classroom.objects.filter(
+            models.Q(students=user) | models.Q(teacher=user)
+        ).distinct()
 
     def get_serializer_class(self):
         if self.action == "retrieve":
@@ -189,7 +192,11 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         return ClassroomSerializer
 
     def perform_create(self, serializer):
-        serializer.save(teacher=self.request.user)
+        # If student creates, force class_type to GROUP
+        if self.request.user.role == "student":
+            serializer.save(teacher=self.request.user, class_type="GROUP")
+        else:
+            serializer.save(teacher=self.request.user)
 
     @action(detail=True, methods=["post"], url_path="add_student")
     def add_student(self, request, pk=None):
