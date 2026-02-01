@@ -28,6 +28,7 @@ ALLOWED_HOSTS = env.list(
         "www.ankivn.com",
         "localhost",
         "127.0.0.1",
+        "103.56.163.148", 
     ],
 )
 
