@@ -417,7 +417,7 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         })
 
     @action(detail=False, methods=["post"], url_path="join")
-    def join_class(self, request):
+    def request_join(self, request):
         """Student requests to join a class using join code (requires teacher approval)."""
         from .models import ClassroomJoinRequest
         
