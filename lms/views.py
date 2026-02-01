@@ -197,7 +197,7 @@ class ClassroomViewSet(viewsets.ModelViewSet):
             return Classroom.objects.filter(teacher=user)
         # Students see classes they joined OR groups they created (as owner/teacher)
         return Classroom.objects.filter(
-            models.Q(students=user) | models.Q(teacher=user)
+            Q(students=user) | Q(teacher=user)
         ).distinct()
 
     def get_serializer_class(self):
