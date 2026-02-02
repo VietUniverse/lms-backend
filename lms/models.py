@@ -201,6 +201,12 @@ class Deck(models.Model):
         blank=True,
     )
     title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default="")
+    ORIGIN_CHOICES = [
+        ("UPLOAD", "Uploaded"),
+        ("WEB", "Created Online"),
+    ]
+    origin = models.CharField(max_length=10, choices=ORIGIN_CHOICES, default="UPLOAD")
     # Thay FileField bằng CharField để lưu Appwrite file ID
     appwrite_file_id = models.CharField(max_length=255, blank=True)
     appwrite_file_url = models.URLField(max_length=500, blank=True)

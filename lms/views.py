@@ -685,6 +685,7 @@ class DeckViewSet(viewsets.ModelViewSet):
                 title=final_title,
                 card_count=0,
                 status="DRAFT",
+                origin="UPLOAD",
                 appwrite_file_id="pending",
             )
 

@@ -56,13 +56,16 @@ class DeckSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "title",
+            "description",
             "appwrite_file_id",
             "appwrite_file_url",
             "card_count",
             "status",
+            "origin",
             "created_at",
             "class_name",
             "class_id",
+            "teacher",
         ]
         read_only_fields = ["id", "created_at", "status"]
 
