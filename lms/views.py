@@ -1913,9 +1913,78 @@ class MarketplaceViewSet(viewsets.ModelViewSet):
         # Students only see approved
         return MarketplaceItem.objects.filter(status='APPROVED')
 
+    @action(detail=False, methods=['get'], url_path='subscriptions')
+    def subscriptions(self, request):
+        """Get user's marketplace subscriptions (stub - returns empty list)."""
+        # TODO: Implement proper subscription model if needed
+        # For now, return empty list to prevent 404
+        return Response([])
+
+    @action(detail=True, methods=['post'])
+    def subscribe(self, request, pk=None):
+        """Subscribe to a marketplace item (stub)."""
+        item = self.get_object()
+        plan = request.data.get('plan', 'FREE')
+        # TODO: Implement subscription logic
+        return Response({
+            "deckId": str(item.id),
+            "deckName": item.deck.title if item.deck else "Unknown",
+            "subscribedAt": item.created_at.isoformat() if hasattr(item, 'created_at') else None,
+            "plan": plan,
+            "addedToMyDecks": False,
+            "autoUpdate": True,
+            "pendingChangesCount": 0
+        })
+
+    @action(detail=True, methods=['post'])
+    def unsubscribe(self, request, pk=None):
+        """Unsubscribe from a marketplace item (stub)."""
+        # TODO: Implement unsubscribe logic
+        return Response({"message": "Unsubscribed successfully"})
+
+    @action(detail=True, methods=['post'], url_path='add-to-library')
+    def add_to_library(self, request, pk=None):
+        """Add subscribed deck to user's library."""
+        item = self.get_object()
+        # Clone deck to user's library (same as download action)
+        user = request.user
+        original_deck = item.deck
+        
+        if not original_deck:
+            return Response({"error": "Deck not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        new_deck = Deck.objects.create(
+            teacher=user,
+            title=f"{original_deck.title}",
+            appwrite_file_id=original_deck.appwrite_file_id,
+            appwrite_file_url=original_deck.appwrite_file_url,
+            card_count=original_deck.card_count,
+            status='ACTIVE',
+            origin='WEB'
+        )
+        # Copy cards
+        for card in original_deck.cards.all():
+            Card.objects.create(
+                deck=new_deck,
+                front=card.front,
+                back=card.back,
+                note_id=card.note_id,
+                fields=card.fields,
+                note_type=card.note_type,
+                tags=card.tags
+            )
+        
+        return Response({"message": "Added to library", "new_deck_id": new_deck.id})
+
+    @action(detail=True, methods=['post'], url_path='remove-from-library')
+    def remove_from_library(self, request, pk=None):
+        """Remove deck from user's library (stub)."""
+        # TODO: Implement proper removal logic
+        return Response({"message": "Removed from library"})
+
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
-        if not (request.user.is_staff or request.user.role == 'teacher'): # Allow teacher to approve for now? Or just Admin? User said "Admin to manage". Let's assume Teacher can be admin or just is_staff check.
+        if not (request.user.is_staff or request.user.role == 'teacher'):
             return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
             
         item = self.get_object()
@@ -1945,19 +2014,16 @@ class MarketplaceViewSet(viewsets.ModelViewSet):
         item.downloads += 1
         item.save()
         
-        # Logic to clone Deck to user's library?
-        # Or just return the deck data for frontend to import?
-        # Ideally backend clones the deck locally.
-        
         # Clone Deck logic:
         original_deck = item.deck
         new_deck = Deck.objects.create(
-            teacher=user, # Assign to user (even if student, they own the copy)
+            teacher=user,
             title=f"{original_deck.title} (Copy)",
-            appwrite_file_id=original_deck.appwrite_file_id, # Reuse file
+            appwrite_file_id=original_deck.appwrite_file_id,
             appwrite_file_url=original_deck.appwrite_file_url,
             card_count=original_deck.card_count,
-            status='ACTIVE'
+            status='ACTIVE',
+            origin='WEB'
         )
         # Copy cards
         for card in original_deck.cards.all():
@@ -1972,3 +2038,4 @@ class MarketplaceViewSet(viewsets.ModelViewSet):
             )
             
         return Response({"message": "Deck downloaded successfully", "new_deck_id": new_deck.id})
+
