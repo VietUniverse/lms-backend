@@ -37,6 +37,7 @@ class DeckInjector:
         success = injector.inject_apkg(apkg_content=bytes_content)
     """
     
+    def __init__(self, student_email: str):
         self.student_email = student_email
         self.student_dir = ANKI_DATA_PATH / student_email
         self.collection_path = self.student_dir / "collection.anki2"
