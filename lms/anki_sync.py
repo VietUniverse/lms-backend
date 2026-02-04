@@ -12,10 +12,15 @@ Key features:
 """
 
 import os
-import fcntl
+import os
 import logging
 from pathlib import Path
 from django.conf import settings
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 logger = logging.getLogger(__name__)
 
