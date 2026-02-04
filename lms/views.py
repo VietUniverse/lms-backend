@@ -357,14 +357,15 @@ class ClassroomViewSet(viewsets.ModelViewSet):
                     os.unlink(tmp_path)
                 
                 # Inject to each student in class
-                for student in classroom.students.all():
-                    success, message = inject_deck_to_student(student.email, deck_content)
-                    if success:
-                        injection_results["success"].append(student.email)
-                    elif "has not synced" in message:
-                        injection_results["not_synced"].append(student.email)
-                    else:
-                        injection_results["failed"].append({"email": student.email, "error": message})
+                # DISABLED: Using Anki Addon for client-side download instead
+                # for student in classroom.students.all():
+                #     success, message = inject_deck_to_student(student.email, deck_content)
+                #     if success:
+                #         injection_results["success"].append(student.email)
+                #     elif "has not synced" in message:
+                #         injection_results["not_synced"].append(student.email)
+                #     else:
+                #         injection_results["failed"].append({"email": student.email, "error": message})
                         
             except Exception as e:
                 import logging
