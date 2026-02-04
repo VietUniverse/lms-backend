@@ -51,7 +51,7 @@ services:
              gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 4"
 
   anki-sync:
-    image: ghcr.io/ankitects/anki-sync-server:latest
+    image: lms-backend-anki-sync-server:latest
     container_name: ankilms_anki
     restart: always
     env_file:
