@@ -42,8 +42,11 @@ class DeckInjector:
         self.collection_path = self.student_dir / "collection.anki2"
         self.media_dir = self.student_dir / "collection.media"
 
-        # Web Accessible Media Path (Exposure)
+        # Web Accessible Media Path (Exposure) - NOW UNUSED if Rclone is active, but kept for fallback
         self.web_media_dir = Path(settings.MEDIA_ROOT) / "students" / student_email / "collection.media"
+
+        # Rclone Mount Path (Must be mounted in container at /mnt/ankivn-media)
+        self.rclone_mount_point = Path("/mnt/ankivn-media")
 
         
     def student_has_collection(self) -> bool:
@@ -119,8 +122,8 @@ class DeckInjector:
             except (json.JSONDecodeError, IOError) as e:
                 logger.warning(f"Could not parse media file: {e}")
         
-        # Ensure media directory exists
-        self.media_dir.mkdir(parents=True, exist_ok=True)
+        # Ensure media directory exists (Handle Rclone Symlink)
+        self._ensure_media_symlink()
         
         # Copy media files with correct names
         media_copied = 0
@@ -129,12 +132,13 @@ class DeckInjector:
             if source_file.exists():
                 dest_file = self.media_dir / actual_name
                 try:
+                    # If symlink is active, this writes directly to R2!
                     shutil.copy2(source_file, dest_file)
                     media_copied += 1
                 except Exception as e:
                     logger.warning(f"Failed to copy media {actual_name}: {e}")
         
-        logger.info(f"Copied {media_copied}/{len(media_mapping)} media files for {self.student_email}")
+        logger.info(f"Copied {media_copied}/{len(media_mapping)} media files for {self.student_email} (Target: {self.media_dir})")
         
         # Import cards/notes into student's collection
         try:
@@ -448,20 +452,66 @@ class DeckInjector:
         except Exception as e:
             logger.warning(f"Could not update media database: {e}")
 
-        # SYNC TO WEB MEDIA DIR (For Studio Preview)
+        # SYNC TO WEB MEDIA DIR (Legacy/Fallback)
+        # If Rclone is active, media is already on R2 (via symlink)
+        # Frontend should use CDN/Nginx URL to access it.
+        # We only copy if NOT using symlink strategy
+        if not self.media_dir.is_symlink():
+            try:
+                self.web_media_dir.mkdir(parents=True, exist_ok=True)
+                if self.media_dir.exists():
+                    synced_count = 0
+                    for media_file in self.media_dir.iterdir():
+                        if media_file.is_file():
+                            dest = self.web_media_dir / media_file.name
+                            if not dest.exists() or dest.stat().st_mtime < media_file.stat().st_mtime:
+                                shutil.copy2(media_file, dest)
+                                synced_count += 1
+                    logger.info(f"Synced {synced_count} media files to web dir for {self.student_email}")
+            except Exception as e:
+                logger.error(f"Failed to sync media to web dir: {e}")
+    
+    def _ensure_media_symlink(self):
+        """
+        Ensures that the student's collection.media directory is a symlink to the Rclone mount.
+        """
+        if not self.rclone_mount_point.exists():
+            logger.warning("Rclone mount point not found. Using local storage.")
+            self.media_dir.mkdir(parents=True, exist_ok=True)
+            return
+
+        r2_user_dir = self.rclone_mount_point / self.student_email
+        r2_user_dir.mkdir(parents=True, exist_ok=True) # Create user folder on R2
+        
+        # If we handle individual decks, we simply point collection.media to the user's R2 folder
+        # Note: Anki structure is usually <user>/collection.media. 
+        # But Rclone might just be <user> folder containing media? 
+        # Let's match typical Anki structure: R2/<user> -> collection.media files inside?
+        # NO, user wants Rclone mount matches structure.
+        # Let's assume R2/<user> IS the media folder for simplicity? 
+        # OR R2/<user>/collection.media?
+        # User prompt said: "/mnt/r2-media/{email}" -> Rclone path.
+        
+        if self.media_dir.is_symlink():
+            return # Already good
+            
+        if self.media_dir.exists() and not self.media_dir.is_symlink():
+            # Migrate existing files
+            logger.info(f"Migrating existing media for {self.student_email} to Rclone...")
+            for f in self.media_dir.iterdir():
+                if f.is_file():
+                    shutil.move(str(f), str(r2_user_dir / f.name))
+            shutil.rmtree(self.media_dir)
+            
+        # Create Symlink
+        # self.media_dir -> r2_user_dir
         try:
-            self.web_media_dir.mkdir(parents=True, exist_ok=True)
-            if self.media_dir.exists():
-                synced_count = 0
-                for media_file in self.media_dir.iterdir():
-                    if media_file.is_file():
-                        dest = self.web_media_dir / media_file.name
-                        if not dest.exists() or dest.stat().st_mtime < media_file.stat().st_mtime:
-                            shutil.copy2(media_file, dest)
-                            synced_count += 1
-                logger.info(f"Synced {synced_count} media files to web dir for {self.student_email}")
+            self.media_dir.symlink_to(r2_user_dir)
+            logger.info(f"Created Rclone symlink for {self.student_email}")
         except Exception as e:
-            logger.error(f"Failed to sync media to web dir: {e}")
+            logger.error(f"Failed to create symlink: {e}")
+            # Fallback
+            self.media_dir.mkdir(parents=True, exist_ok=True)
 
 
 
