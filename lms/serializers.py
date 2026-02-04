@@ -50,6 +50,7 @@ class CoinTransactionSerializer(serializers.ModelSerializer):
 class DeckSerializer(serializers.ModelSerializer):
     class_name = serializers.SerializerMethodField()
     class_id = serializers.SerializerMethodField()
+    teacher_email = serializers.SerializerMethodField()
 
     class Meta:
         model = Deck
@@ -65,9 +66,15 @@ class DeckSerializer(serializers.ModelSerializer):
             "created_at",
             "class_name",
             "class_id",
+            "class_id",
             "teacher",
+            "teacher_email",
         ]
-        read_only_fields = ["id", "created_at", "status"]
+        read_only_fields = ["id", "created_at", "status", "teacher_email"]
+
+    def get_teacher_email(self, obj):
+        return obj.teacher.email if obj.teacher else None
+
 
     def get_class_name(self, obj):
         # Get first classroom this deck is assigned to

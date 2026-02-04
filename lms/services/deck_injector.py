@@ -37,11 +37,14 @@ class DeckInjector:
         success = injector.inject_apkg(apkg_content=bytes_content)
     """
     
-    def __init__(self, student_email: str):
         self.student_email = student_email
         self.student_dir = ANKI_DATA_PATH / student_email
         self.collection_path = self.student_dir / "collection.anki2"
         self.media_dir = self.student_dir / "collection.media"
+
+        # Web Accessible Media Path (Exposure)
+        self.web_media_dir = Path(settings.MEDIA_ROOT) / "students" / student_email / "collection.media"
+
         
     def student_has_collection(self) -> bool:
         """Check if student has synced at least once (collection exists)."""
@@ -444,6 +447,22 @@ class DeckInjector:
             logger.info(f"Updated media database for {self.student_email} with {len(media_files)} files")
         except Exception as e:
             logger.warning(f"Could not update media database: {e}")
+
+        # SYNC TO WEB MEDIA DIR (For Studio Preview)
+        try:
+            self.web_media_dir.mkdir(parents=True, exist_ok=True)
+            if self.media_dir.exists():
+                synced_count = 0
+                for media_file in self.media_dir.iterdir():
+                    if media_file.is_file():
+                        dest = self.web_media_dir / media_file.name
+                        if not dest.exists() or dest.stat().st_mtime < media_file.stat().st_mtime:
+                            shutil.copy2(media_file, dest)
+                            synced_count += 1
+                logger.info(f"Synced {synced_count} media files to web dir for {self.student_email}")
+        except Exception as e:
+            logger.error(f"Failed to sync media to web dir: {e}")
+
 
 
 def inject_deck_to_class(deck_apkg_content: bytes, student_emails: List[str]) -> Dict[str, Tuple[bool, str]]:
