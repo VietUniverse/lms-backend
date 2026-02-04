@@ -28,13 +28,15 @@ services:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
-      - ANKI_SYNC_DATA_PATH=/anki_data
+      - ANKI_SYNC_DATA_PATH=/data
       - ANKI_SYNC_CONTAINER_NAME=ankilms_anki
       - ANKI_SYNC_USERS_FILE=/app/sync_users.env
     volumes:
       - static_volume:/app/staticfiles
       - ./sync_users.env:/app/sync_users.env
-      - anki_data:/anki_data:ro
+      - ./media:/app/media
+      - ./sync_data:/data # Bind mount for easier debugging/access
+      - /mnt/ankivn-media:/mnt/ankivn-media # Rclone Mount
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8000:8000"
@@ -55,7 +57,8 @@ services:
     env_file:
       - ./sync_users.env
     volumes:
-      - anki_data:/anki_data
+      - ./sync_data:/data # Bind mount
+      - /mnt/ankivn-media:/mnt/ankivn-media # Rclone Mount
     ports:
       - "8080:8080"
     healthcheck:
@@ -77,6 +80,8 @@ services:
       - static_volume:/app/staticfiles:ro
       - ./certbot/conf:/etc/letsencrypt:ro
       - ./certbot/www:/var/www/certbot:ro
+      - ./media:/app/media:ro
+      - /mnt/ankivn-media:/app/media/students:ro # Mount Rclone directly to /media/students
     depends_on:
       - backend
       - anki-sync
