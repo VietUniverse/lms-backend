@@ -124,14 +124,22 @@ class ClassroomDetailSerializer(serializers.ModelSerializer):
     tests = TestBriefSerializer(many=True, read_only=True)
     decks = DeckSerializer(many=True, read_only=True)
 
+    is_owner = serializers.SerializerMethodField()
+
     class Meta:
         model = Classroom
         fields = [
             "id", "name", "description", "join_code", "status", "student_count", 
             "students", "tests", "decks", "created_at",
-            "class_type", "max_students", "is_public", "topics"  # Advanced fields
+            "class_type", "max_students", "is_public", "topics", "is_owner", "teacher"
         ]
         read_only_fields = ["id", "join_code", "created_at"]
+
+    def get_is_owner(self, obj):
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            return obj.teacher == request.user
+        return False
 
     def get_student_count(self, obj):
         return obj.students.count()
