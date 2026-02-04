@@ -50,21 +50,31 @@ def on_sync() -> None:
             deck_id = deck_info["lms_deck_id"]
             title = deck_info["title"]
             server_version = deck_info.get("version", 1)
-            local_version = config.get_deck_version(deck_id)  # Use deck_id, not title
+            local_version = config.get_deck_version(deck_id)
             
-            print(f"[LMS] Deck {deck_id} '{title}': server_version={server_version}, local_version={local_version}")
+            # Check if deck actually exists in Anki
+            is_missing_locally = True
+            deck_mappings = config.get_all_tracked_decks()
+            for name, mapped_id in deck_mappings.items():
+                if mapped_id == deck_id:
+                    if mw.col.decks.by_name(name):
+                        is_missing_locally = False
+                        break
             
-            if server_version > local_version:
-                # Download new version
-                print(f"[LMS] Downloading deck {deck_id}...")
+            print(f"[LMS] Deck {deck_id}: server_v={server_version}, local_v={local_version}, missing={is_missing_locally}")
+            
+            if server_version > local_version or is_missing_locally:
+                # Download new version or if missing
+                reason = "new version" if server_version > local_version else "missing locally"
+                print(f"[LMS] Downloading deck {deck_id} ({reason})...")
                 tooltip(f"Đang tải: {title}...")
                 success = _download_and_import(client, deck_id, title)
                 if success:
                     config.set_deck_version(deck_id, server_version)
                     downloaded += 1
-                    print(f"[LMS] Deck {deck_id} imported successfully, saved version={server_version}")
+                    print(f"[LMS] Imported successfully")
             else:
-                print(f"[LMS] Deck {deck_id} already up to date, skipping")
+                print(f"[LMS] Deck {deck_id} up to date")
         
         # Step 3: Upload progress
         synced = _upload_progress(client)

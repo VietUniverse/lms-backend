@@ -1049,7 +1049,7 @@ def anki_deck_download(request, deck_id):
             local_path = os.path.join(django_settings.MEDIA_ROOT, "decks", filename)
             
             if not os.path.exists(local_path):
-                return Response({"error": f"File không tồn tại: {filename}"}, status=status.HTTP_404_NOT_FOUND)
+                return JsonResponse({"error": f"File không tồn tại: {filename}"}, status=404)
             
             file_size = os.path.getsize(local_path)
             logger.info(f"Serving local file: {local_path} ({file_size} bytes)")
