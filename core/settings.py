@@ -176,3 +176,10 @@ APPWRITE_BUCKET_ID = env("APPWRITE_BUCKET_ID", default="695fd372002412b4c017")
 # ANKI ADDON SSO (Token Exchange Secret)
 # ============================================
 ANKI_ADDON_SECRET = env("ANKI_ADDON_SECRET", default="f1d76aa60054747a400f8a7018579d1dbfde10980c44c8b71b3a891f9e0f8ac2")
+
+# ============================================
+# ANKI SYNC SERVER CONFIG
+# ============================================
+ANKI_SYNC_DATA_PATH = env("ANKI_SYNC_DATA_PATH", default="/data")
+ANKI_SYNC_USERS_FILE = env("ANKI_SYNC_USERS_FILE", default="/app/sync_users.env")
+ANKI_SYNC_CONTAINER_NAME = env("ANKI_SYNC_CONTAINER_NAME", default="ankilms_anki")
