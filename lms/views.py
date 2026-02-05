@@ -728,8 +728,9 @@ class DeckViewSet(viewsets.ModelViewSet):
             ]
             Card.objects.bulk_create(card_objects)
 
-            # Update card count
+            # Update card count and activate deck
             deck.card_count = len(card_objects)
+            deck.status = "ACTIVE"  # Auto-activate after valid upload
             deck.save()
 
             # Prepare preview (first 5 cards) - show field names
