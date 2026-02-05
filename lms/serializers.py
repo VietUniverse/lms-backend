@@ -70,7 +70,7 @@ class DeckSerializer(serializers.ModelSerializer):
             "teacher",
             "teacher_email",
         ]
-        read_only_fields = ["id", "created_at", "status", "teacher_email"]
+        read_only_fields = ["id", "created_at", "teacher_email"]
 
     def get_teacher_email(self, obj):
         return obj.teacher.email if obj.teacher else None
