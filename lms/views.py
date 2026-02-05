@@ -654,6 +654,23 @@ class DeckViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(teacher=self.request.user)
 
+    def partial_update(self, request, *args, **kwargs):
+        """Force handle status update to bypass read_only_fields issues."""
+        instance = self.get_object()
+        status_val = request.data.get("status")
+        
+        if status_val in ["ACTIVE", "DRAFT", "PROCESSING"]:
+            # Hard update status if provided
+            instance.status = status_val
+            instance.save()
+            
+            # If status only, return early
+            if len(request.data) == 1:
+                serializer = self.get_serializer(instance)
+                return Response(serializer.data)
+                
+        return super().partial_update(request, *args, **kwargs)
+
     @action(detail=False, methods=["post"], url_path="upload", parser_classes=[MultiPartParser, FormParser])
     def upload(self, request):
         """Upload .apkg file directly and parse cards (Local storage)."""
