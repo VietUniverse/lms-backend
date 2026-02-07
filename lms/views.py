@@ -854,6 +854,52 @@ class DeckViewSet(viewsets.ModelViewSet):
         
         return Response(result)
 
+    @action(detail=True, methods=["get"], url_path="learn")
+    def learn(self, request, pk=None):
+        """
+        Get cards for learning session.
+        GET /api/decks/{id}/learn/?limit=20&shuffle=true
+        
+        Query params:
+        - limit: Max cards to return (default: all)
+        - shuffle: Randomize order (default: true)
+        """
+        import random
+        
+        deck = self.get_object()
+        cards = list(Card.objects.filter(deck=deck))
+        
+        # Shuffle if requested (default: true)
+        shuffle = request.query_params.get("shuffle", "true").lower() == "true"
+        if shuffle:
+            random.shuffle(cards)
+        
+        # Limit cards
+        limit = request.query_params.get("limit")
+        if limit:
+            try:
+                cards = cards[:int(limit)]
+            except ValueError:
+                pass
+        
+        result = []
+        for card in cards:
+            result.append({
+                "id": card.id,
+                "front": card.front,
+                "back": card.back,
+                "fields": card.fields if card.fields else {"Front": card.front, "Back": card.back},
+                "note_type": card.note_type or "Basic",
+            })
+        
+        return Response({
+            "deck_id": deck.id,
+            "deck_title": deck.title,
+            "total_cards": deck.card_count,
+            "session_cards": len(result),
+            "cards": result
+        })
+
 
 @api_view(["PATCH", "DELETE"])
 @permission_classes([permissions.IsAuthenticated])
