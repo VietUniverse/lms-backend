@@ -868,3 +868,144 @@ class UserAchievement(models.Model):
         self.rewarded = True
         self.save()
         return True
+
+
+# ============================================
+# NOTIFICATION SYSTEM
+# ============================================
+
+class Notification(models.Model):
+    """
+    Thông báo cho user.
+    - CLASS_INVITE: Giáo viên mời học sinh vào lớp
+    - JOIN_REQUEST: Học sinh xin vào lớp (gửi đến giáo viên)
+    - REQUEST_APPROVED: Yêu cầu được duyệt (gửi đến học sinh)
+    - REQUEST_REJECTED: Yêu cầu bị từ chối
+    """
+    TYPE_CHOICES = [
+        ('CLASS_INVITE', 'Lời mời vào lớp'),
+        ('JOIN_REQUEST', 'Yêu cầu xin vào lớp'),
+        ('REQUEST_APPROVED', 'Được chấp nhận vào lớp'),
+        ('REQUEST_REJECTED', 'Bị từ chối'),
+        ('SYSTEM', 'Thông báo hệ thống'),
+    ]
+    
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='notifications'
+    )
+    notification_type = models.CharField(max_length=30, choices=TYPE_CHOICES)
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    
+    # Related objects
+    related_classroom = models.ForeignKey(
+        'Classroom',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='notifications'
+    )
+    related_join_request = models.ForeignKey(
+        'ClassroomJoinRequest',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True
+    )
+    
+    # Metadata
+    is_read = models.BooleanField(default=False)
+    action_url = models.CharField(max_length=255, blank=True, help_text="URL cho nút hành động")
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'is_read', '-created_at']),
+        ]
+    
+    def __str__(self):
+        return f"[{self.notification_type}] {self.title} -> {self.user.email}"
+    
+    def mark_as_read(self):
+        """Mark this notification as read."""
+        if not self.is_read:
+            self.is_read = True
+            self.save(update_fields=['is_read'])
+
+
+class ClassInvitation(models.Model):
+    """
+    Lời mời tham gia lớp học (qua email).
+    Giáo viên gửi lời mời, nếu người nhận chưa có tài khoản thì tạo token.
+    """
+    STATUS_CHOICES = [
+        ('PENDING', 'Chờ xác nhận'),
+        ('ACCEPTED', 'Đã chấp nhận'),
+        ('EXPIRED', 'Hết hạn'),
+    ]
+    
+    classroom = models.ForeignKey(
+        Classroom,
+        on_delete=models.CASCADE,
+        related_name='invitations'
+    )
+    invited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='sent_invitations'
+    )
+    email = models.EmailField(help_text="Email được mời")
+    
+    # For registered users
+    invited_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='received_invitations'
+    )
+    
+    # Token for unregistered users
+    token = models.CharField(max_length=64, unique=True, blank=True)
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        unique_together = ['classroom', 'email']
+        ordering = ['-created_at']
+    
+    def save(self, *args, **kwargs):
+        if not self.token:
+            self.token = secrets.token_urlsafe(32)
+        if not self.expires_at:
+            from django.utils import timezone
+            from datetime import timedelta
+            self.expires_at = timezone.now() + timedelta(days=7)
+        super().save(*args, **kwargs)
+    
+    def accept(self, user):
+        """Accept the invitation and add user to classroom."""
+        from django.utils import timezone
+        self.status = 'ACCEPTED'
+        self.invited_user = user
+        self.accepted_at = timezone.now()
+        self.save()
+        self.classroom.students.add(user)
+        
+        # Create notification for the invited user
+        Notification.objects.create(
+            user=user,
+            notification_type='REQUEST_APPROVED',
+            title=f'Bạn đã tham gia lớp "{self.classroom.name}"',
+            message=f'{self.invited_by.name or self.invited_by.email} đã mời bạn vào lớp.',
+            related_classroom=self.classroom
+        )
+    
+    def __str__(self):
+        return f"Invite {self.email} -> {self.classroom.name} ({self.status})"
+

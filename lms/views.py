@@ -8,7 +8,7 @@ from django.contrib.auth import get_user_model
 from django.db.models import Sum, Q
 import requests
 
-from .models import Classroom, Deck, Card, Test, Progress, MarketplaceItem
+from .models import Classroom, Deck, Card, Test, Progress, MarketplaceItem, Notification
 from .utils import download_from_appwrite, parse_anki_file, get_primary_deck_name
 import tempfile
 import os
@@ -528,6 +528,17 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         # Approve and add student to class
         join_request.approve(request.user)
         
+        # Create notification for the student
+        Notification.objects.create(
+            user=join_request.student,
+            notification_type='REQUEST_APPROVED',
+            title=f'Bạn đã được chấp nhận vào lớp "{classroom.name}"',
+            message=f'{request.user.full_name or request.user.email} đã duyệt yêu cầu tham gia của bạn.',
+            related_classroom=classroom,
+            related_join_request=join_request,
+            action_url=f'/classes/{classroom.id}'
+        )
+        
         return Response({
             "message": f"Đã duyệt {join_request.student.full_name or join_request.student.email}",
             "student_id": join_request.student.id
@@ -557,6 +568,16 @@ class ClassroomViewSet(viewsets.ModelViewSet):
         
         # Reject request
         join_request.reject(request.user)
+        
+        # Create notification for the student
+        Notification.objects.create(
+            user=join_request.student,
+            notification_type='REQUEST_REJECTED',
+            title=f'Yêu cầu vào lớp "{classroom.name}" bị từ chối',
+            message=f'{request.user.full_name or request.user.email} đã từ chối yêu cầu tham gia của bạn.',
+            related_classroom=classroom,
+            related_join_request=join_request
+        )
         
         return Response({
             "message": f"Đã từ chối {join_request.student.full_name or join_request.student.email}"
@@ -2057,4 +2078,211 @@ class MarketplaceViewSet(viewsets.ModelViewSet):
             )
             
         return Response({"message": "Deck downloaded successfully", "new_deck_id": new_deck.id})
+
+
+# ============================================
+# NOTIFICATION API
+# ============================================
+
+class NotificationViewSet(viewsets.ModelViewSet):
+    """API endpoint cho thông báo người dùng."""
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get', 'patch', 'post']
+    
+    def get_queryset(self):
+        return Notification.objects.filter(user=self.request.user)
+    
+    def get_serializer_class(self):
+        from .serializers import NotificationSerializer
+        return NotificationSerializer
+    
+    def list(self, request):
+        """Get all notifications for current user."""
+        queryset = self.get_queryset()
+        unread_count = queryset.filter(is_read=False).count()
+        serializer = self.get_serializer(queryset[:50], many=True)
+        
+        return Response({
+            "unread_count": unread_count,
+            "notifications": serializer.data
+        })
+    
+    @action(detail=True, methods=['patch'], url_path='read')
+    def mark_read(self, request, pk=None):
+        """Mark a single notification as read."""
+        try:
+            notification = self.get_queryset().get(pk=pk)
+            notification.mark_as_read()
+            return Response({"message": "Đã đọc"})
+        except Notification.DoesNotExist:
+            return Response({"error": "Không tìm thấy"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=False, methods=['post'], url_path='mark-all-read')
+    def mark_all_read(self, request):
+        """Mark all notifications as read."""
+        self.get_queryset().filter(is_read=False).update(is_read=True)
+        return Response({"message": "Đã đọc tất cả"})
+
+
+# ============================================
+# CLASS INVITATION API (via Email)
+# ============================================
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def invite_to_class(request, class_id):
+    """
+    Teacher invites student to class by email.
+    - If student already registered: create notification
+    - If not registered: create invitation with token (for future signup)
+    - Send email in both cases
+    """
+    from django.core.mail import send_mail
+    from .models import Classroom, ClassInvitation, Notification
+    
+    try:
+        classroom = Classroom.objects.get(id=class_id)
+    except Classroom.DoesNotExist:
+        return Response({"error": "Không tìm thấy lớp học"}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Only teacher can invite
+    if request.user != classroom.teacher:
+        return Response({"error": "Chỉ giáo viên mới có thể mời"}, status=status.HTTP_403_FORBIDDEN)
+    
+    email = request.data.get('email')
+    if not email:
+        return Response({"error": "Email is required"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Check if already a student
+    if classroom.students.filter(email=email).exists():
+        return Response({"error": "Học sinh này đã ở trong lớp"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Check if invitation already exists
+    existing = ClassInvitation.objects.filter(classroom=classroom, email=email, status='PENDING').first()
+    if existing:
+        return Response({"error": "Đã gửi lời mời trước đó"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Create invitation
+    invitation = ClassInvitation.objects.create(
+        classroom=classroom,
+        invited_by=request.user,
+        email=email
+    )
+    
+    # Check if user is already registered
+    try:
+        existing_user = User.objects.get(email=email)
+        invitation.invited_user = existing_user
+        invitation.save()
+        
+        # Create notification for existing user
+        Notification.objects.create(
+            user=existing_user,
+            notification_type='CLASS_INVITE',
+            title=f'Lời mời tham gia lớp "{classroom.name}"',
+            message=f'{request.user.full_name or request.user.email} đã mời bạn tham gia lớp.',
+            related_classroom=classroom,
+            action_url=f'/classes/invitation/{invitation.token}'
+        )
+    except User.DoesNotExist:
+        # User not registered yet - invitation token will be used on signup
+        pass
+    
+    # Send email (basic - can be improved with templates)
+    try:
+        invite_url = f"{settings.FRONTEND_URL}/classes/invitation/{invitation.token}"
+        send_mail(
+            subject=f'Lời mời tham gia lớp {classroom.name}',
+            message=f'''
+Xin chào,
+
+{request.user.full_name or request.user.email} đã mời bạn tham gia lớp "{classroom.name}" trên AnkiVN.
+
+Nhấn vào link sau để tham gia:
+{invite_url}
+
+Link này sẽ hết hạn sau 7 ngày.
+
+Trân trọng,
+AnkiVN Team
+            ''',
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[email],
+            fail_silently=True,
+        )
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+    
+    return Response({
+        "message": f"Đã gửi lời mời đến {email}",
+        "invitation_id": invitation.id
+    })
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([permissions.IsAuthenticated])
+def accept_invitation(request, token):
+    """
+    Student accepts class invitation via token.
+    GET: View invitation details
+    POST: Accept invitation
+    """
+    from .models import ClassInvitation
+    from django.utils import timezone
+    
+    try:
+        invitation = ClassInvitation.objects.get(token=token)
+    except ClassInvitation.DoesNotExist:
+        return Response({"error": "Lời mời không hợp lệ"}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Check expiry
+    if invitation.expires_at < timezone.now():
+        invitation.status = 'EXPIRED'
+        invitation.save()
+        return Response({"error": "Lời mời đã hết hạn"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    if invitation.status != 'PENDING':
+        return Response({"error": f"Lời mời đã {invitation.get_status_display()}"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    if request.method == 'GET':
+        # Return invitation details
+        from .serializers import ClassInvitationSerializer
+        return Response(ClassInvitationSerializer(invitation).data)
+    
+    # POST - Accept invitation
+    user = request.user
+    
+    # Verify email matches (optional - can be flexible)
+    # if user.email.lower() != invitation.email.lower():
+    #     return Response({"error": "Email không khớp với lời mời"}, status=status.HTTP_403_FORBIDDEN)
+    
+    invitation.accept(user)
+    
+    return Response({
+        "message": f"Bạn đã tham gia lớp {invitation.classroom.name}",
+        "classroom_id": invitation.classroom.id
+    })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def unread_notification_count(request):
+    """Quick endpoint to get unread notification count (for bell badge)."""
+    count = Notification.objects.filter(user=request.user, is_read=False).count()
+    
+    # For teachers, also include pending join requests
+    pending_requests = 0
+    if hasattr(request.user, 'managed_classes'):
+        from .models import ClassroomJoinRequest
+        pending_requests = ClassroomJoinRequest.objects.filter(
+            classroom__teacher=request.user,
+            status='PENDING'
+        ).count()
+    
+    return Response({
+        "unread_notifications": count,
+        "pending_requests": pending_requests,
+        "total_badge": count + pending_requests
+    })
+
 

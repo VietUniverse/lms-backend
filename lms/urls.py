@@ -10,6 +10,7 @@ router.register(r"progress", views.ProgressViewSet, basename="progress")
 router.register(r"tickets", views.SupportTicketViewSet, basename="ticket")
 router.register(r"events", views.EventViewSet, basename="event")  # Phase 2
 router.register(r"marketplace", views.MarketplaceViewSet, basename="marketplace")
+router.register(r"notifications", views.NotificationViewSet, basename="notification")
 
 urlpatterns = [
     path("", views.index),
@@ -50,5 +51,13 @@ urlpatterns = [
     # Deck Card Management
     path("decks/<int:deck_id>/cards/<int:card_id>/", views.deck_card_detail, name="deck-card-detail"),
     
+    # Notification Endpoints
+    path("notifications/unread-count/", views.unread_notification_count, name="unread-notification-count"),
+    
+    # Class Invitation Endpoints
+    path("classes/<int:class_id>/invite/", views.invite_to_class, name="invite-to-class"),
+    path("invitations/<str:token>/", views.accept_invitation, name="accept-invitation"),
+    
     path("", include(router.urls)),
 ]
+

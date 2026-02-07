@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Classroom, Deck, Card, Test, TestSubmission, Progress, SupportTicket, Event, EventParticipant, Achievement, UserAchievement, MarketplaceItem, ClassroomJoinRequest, CoinTransaction
+from .models import Classroom, Deck, Card, Test, TestSubmission, Progress, SupportTicket, Event, EventParticipant, Achievement, UserAchievement, MarketplaceItem, ClassroomJoinRequest, CoinTransaction, Notification, ClassInvitation
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -359,3 +359,43 @@ class MarketplaceItemSerializer(serializers.ModelSerializer):
         # Assign author from context
         validated_data['author'] = self.context['request'].user
         return super().create(validated_data)
+
+
+# ============================================
+# NOTIFICATION SERIALIZERS
+# ============================================
+
+class NotificationSerializer(serializers.ModelSerializer):
+    """Serializer cho thông báo."""
+    classroom_name = serializers.CharField(source='related_classroom.name', read_only=True, default=None)
+    classroom_id = serializers.IntegerField(source='related_classroom.id', read_only=True, default=None)
+    
+    class Meta:
+        model = Notification
+        fields = [
+            "id", "notification_type", "title", "message",
+            "classroom_name", "classroom_id", "is_read", 
+            "action_url", "created_at"
+        ]
+        read_only_fields = fields
+
+
+class ClassInvitationSerializer(serializers.ModelSerializer):
+    """Serializer cho lời mời tham gia lớp."""
+    classroom_name = serializers.CharField(source='classroom.name', read_only=True)
+    invited_by_name = serializers.CharField(source='invited_by.full_name', read_only=True)
+    invited_by_email = serializers.CharField(source='invited_by.email', read_only=True)
+    
+    class Meta:
+        model = ClassInvitation
+        fields = [
+            "id", "classroom", "classroom_name", "email",
+            "invited_by", "invited_by_name", "invited_by_email",
+            "status", "token", "created_at", "expires_at"
+        ]
+        read_only_fields = ["id", "token", "status", "created_at", "expires_at", "invited_by"]
+
+    def create(self, validated_data):
+        validated_data['invited_by'] = self.context['request'].user
+        return super().create(validated_data)
+
