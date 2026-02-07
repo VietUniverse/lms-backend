@@ -133,20 +133,37 @@ def get_primary_deck_name(apkg_path: str) -> str:
 def parse_anki_file(apkg_path: str) -> list[dict]:
     """
     Parse an Anki .apkg file, extract cards with ALL fields and field names.
+    Media files are saved to Cloudflare R2 via Rclone mount.
     """
     import json
     
     cards = []
     temp_dir = tempfile.mkdtemp()
     
-    # Destination for media files
-    media_dir = os.path.join(settings.MEDIA_ROOT, 'anki_media')
+    # ============================================
+    # CLOUDFLARE R2 STORAGE (via Rclone mount)
+    # ============================================
+    # Rclone mounts R2 bucket at /mnt/ankivn-media on VPS
+    # This path is also mounted into Docker container
+    R2_MOUNT_PATH = "/mnt/ankivn-media"
+    
+    # Check if R2 mount is available, fallback to local if not
+    if os.path.exists(R2_MOUNT_PATH) and os.path.ismount(R2_MOUNT_PATH):
+        media_dir = os.path.join(R2_MOUNT_PATH, 'anki_media')
+        print(f"[R2] Using Cloudflare R2 storage at {media_dir}")
+    else:
+        # Fallback to local storage (dev environment)
+        media_dir = os.path.join(settings.MEDIA_ROOT, 'anki_media')
+        print(f"[LOCAL] R2 mount not found, using local storage at {media_dir}")
+    
     if not os.path.exists(media_dir):
-        os.makedirs(media_dir)
+        os.makedirs(media_dir, exist_ok=True)
         
     # Use ABSOLUTE URL for production
+    # Note: Nginx serves /mnt/ankivn-media as /media/students/
+    # But for anki_media we serve from /media/anki_media/
     domain = "https://api.ankivn.com" 
-    media_url_base = f"{domain}{settings.MEDIA_URL}anki_media/"
+    media_url_base = f"{domain}/media/anki_media/"
 
     try:
         # Extract the .apkg
