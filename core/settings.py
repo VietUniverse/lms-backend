@@ -19,17 +19,10 @@ SECRET_KEY = env(
 
 DEBUG = env.bool("DEBUG", default=True)
 
-# ALLOWED_HOSTS - explicitly set for production
+# ALLOWED_HOSTS - wildcard is safe because Nginx handles host filtering
 ALLOWED_HOSTS = env.list(
     "ALLOWED_HOSTS",
-    default=[
-        "api.ankivn.com",
-        "ankivn.com",
-        "www.ankivn.com",
-        "localhost",
-        "127.0.0.1",
-        "103.56.163.148", 
-    ],
+    default=["*"],
 )
 
 INSTALLED_APPS = [
